@@ -30,5 +30,6 @@ Desktop.ini
 # Live telemetry & camera snapshots
 live_camera.jpg
 live_telemetry.json
+live_telemetry_tmp.json
 tuning_params.json
 
