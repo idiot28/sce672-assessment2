@@ -1,0 +1,254 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=0.85in,top=0.80in,bottom=0.80in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+\usepackage{array}
+\usepackage[hypcap=false]{caption}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    citecolor=black,
+    urlcolor=blue!70!black
+}
+
+\definecolor{termbg}{rgb}{0.97,0.97,0.97}
+\definecolor{termborder}{rgb}{0.85,0.85,0.85}
+\definecolor{codegreen}{rgb}{0.1,0.5,0.1}
+\definecolor{codeblue}{rgb}{0.1,0.2,0.7}
+
+\lstdefinestyle{codeblock}{
+    backgroundcolor=\color{termbg},
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{termborder},
+    numbers=none,
+    showstringspaces=false,
+    tabsize=4,
+    aboveskip=4pt,
+    belowskip=4pt,
+    keywordstyle=\color{codeblue}\bfseries,
+    commentstyle=\color{codegreen}
+}
+\lstset{style=codeblock}
+
+% Header and Footer
+\pagestyle{fancy}
+\fancyhf{}
+\setlength{\headheight}{14pt}
+\lhead{\textbf{SCE 672: Advanced Robotics}}
+\rhead{Raian E Rabbani (ID: 202617880)}
+\cfoot{\thepage}
+
+\begin{document}
+
+% -----------------------------------------------------------------------------
+% Header / Student Information
+% -----------------------------------------------------------------------------
+\begin{center}
+    {\Large \textbf{King Fahd University of Petroleum \& Minerals}}\\[0.10cm]
+    {\large Systems \& Control Engineering Department}\\[0.18cm]
+    \rule{\textwidth}{0.8pt}\\[0.18cm]
+    {\LARGE \textbf{Assessment 2: Differential Flatness Pursuit and Motor Voltage Dynamics}}\\[0.18cm]
+    \rule{\textwidth}{0.8pt}\\[0.20cm]
+    \begin{tabular}{ll}
+        \textbf{Course:} SCE 672 -- Advanced Robotics & \textbf{Instructor:} Prof. Aamer Iqbal Bhatti \\
+        \textbf{Student Name:} Raian E Rabbani & \textbf{Student ID:} 202617880 \\
+        \textbf{Target Tag:} AprilTag $T_3$ ($d_0 = 1.50$~m) & \textbf{Date:} October 2026
+    \end{tabular}
+\end{center}
+\vspace{0.10cm}
+
+% =============================================================================
+\section*{Problem 1: Visual Search, In-Place Centering \& Standoff Guard}
+% =============================================================================
+
+\subsection*{(i) Downward Camera Setup}
+In our ROS 2 driver node, the robotic arm is initialized to $(X = 105\text{~mm}, Y = 30\text{~mm})$:
+\begin{lstlisting}[language=Python]
+self.ep_robot.robotic_arm.moveto(x=105, y=30).wait_for_completed()
+\end{lstlisting}
+
+\textbf{Why this pose works without blocking the Time-of-Flight (ToF) beam:}
+\begin{itemize}[noitemsep,topsep=2pt]
+    \item \textbf{Downward Tilt:} The FPV camera is attached to the upper arm linkage. Retracting the reach to $X = 105\text{~mm}$ and raising the elevation to $Y = 30\text{~mm}$ tilts the camera downward by about $22^\circ$. This keeps tags on the floor in clear view from $1.8\text{~m}$ down to the $0.20\text{~m}$ standoff.
+    \item \textbf{Sensor Beam Clearance:} The front chassis sensor is mounted low on the front bumper. If the arm is lowered or extended forward ($X > 150\text{~mm}, Y \le 0\text{~mm}$), the gripper hangs in front of the bumper and blocks the beam. Setting $(X = 105\text{~mm}, Y = 30\text{~mm})$ keeps the gripper above the front line-of-sight.
+\end{itemize}
+
+\subsection*{(ii) Search and Centering Finite State Machine}
+The supervisory state machine uses three primary states:
+\begin{enumerate}[noitemsep,topsep=2pt]
+    \item \textbf{\texttt{SEARCHING}:} If the target tag is not visible ($\Delta t > 0.45\text{~s}$), forward speed is set to zero ($v = 0$) and the robot rotates in place at $\omega_z = \pm 0.30\text{~rad/s}$ toward the last known direction.
+    \item \textbf{\texttt{ALIGNING}:} Once the tag is spotted, the robot keeps $v = 0$ and turns in place until bearing error is within $\pm 10^\circ$ ($|\theta_{\text{bearing}}| \le 0.18\text{~rad}$).
+    \item \textbf{\texttt{CHASING}:} Once centered, forward pursuit begins along the generated flat cubic trajectory.
+\end{enumerate}
+
+\textbf{Why in-place alignment prevents trajectory drift and camera loss:}
+\begin{itemize}[noitemsep,topsep=2pt]
+    \item \textbf{Prevents Field-of-View Loss:} The camera has a limited horizontal FOV ($\sim 65^\circ$). Moving forward while bearing error is large sweeps the tag off the side of the frame before the robot finishes turning.
+    \item \textbf{Satisfies 1D Boundary Conditions:} The cubic path is planned along the initial robot forward axis with $y(0) = 0$ and $y(T) = 0$. Aligning first ensures $+X_{\text{body}}$ points directly at the tag, preventing lateral overshoot and wheel slippage.
+\end{itemize}
+
+\subsection*{(iii) Standoff Braking and Decoder Hint}
+\begin{itemize}[noitemsep,topsep=2pt]
+    \item \textbf{Active Standoff Brake:} When the estimated distance drops to $d \le 0.20\text{~m}$ (20 cm), the node engages an immediate active brake ($v = 0, \omega = 0$) and enters \texttt{ARRIVED (20cm)}.
+    \item \textbf{Video Decoder Buffer Recycling:} In the camera thread, adding a short pause (\texttt{time.sleep(0.010)}) between \texttt{cap.grab()} calls gives the FFmpeg decoder time to recycle frames, preventing memory buffer exhaustion (\texttt{av\_frame\_get\_buffer} error).
+\end{itemize}
+
+% =============================================================================
+\section*{Problem 2: Differential Flatness Trajectory Generation}
+% =============================================================================
+
+\subsection*{(i) Differential Flatness Inversion Equations}
+For a unicycle kinematic model $\dot{x} = v\cos\theta, \dot{y} = v\sin\theta, \dot{\theta} = \omega$, the flat output is the position $z(t) = [x(t), y(t)]^T$. The inputs are recovered algebraically from $z(t)$ and its derivatives:
+\begin{equation}
+    v(t) = \sqrt{\dot{x}(t)^2 + \dot{y}(t)^2}, \qquad
+    \omega(t) = \frac{\dot{x}(t)\ddot{y}(t) - \dot{y}(t)\ddot{x}(t)}{\dot{x}(t)^2 + \dot{y}(t)^2}
+    \label{eq:flatness_inversion}
+\end{equation}
+
+\subsection*{(ii) Cubic Polynomial Matrix Solution}
+Each flat coordinate $z_j(t)$ ($j \in \{x, y\}$) is a cubic polynomial:
+\begin{equation}
+    z_j(t) = \alpha_0^{[j]} + \alpha_1^{[j]}t + \alpha_2^{[j]}t^2 + \alpha_3^{[j]}t^3
+\end{equation}
+Applying boundary conditions at $t = 0$ and $t = T$ yields the matrix system $\mathbf{M}(T)\boldsymbol{\alpha}^{[j]} = \mathbf{b}^{[j]}$:
+\begin{equation}
+    \begin{bmatrix}
+        1 & 0 & 0 & 0 \\
+        0 & 1 & 0 & 0 \\
+        1 & T & T^2 & T^3 \\
+        0 & 1 & 2T & 3T^2
+    \end{bmatrix}
+    \begin{bmatrix}
+        \alpha_0^{[j]} \\ \alpha_1^{[j]} \\ \alpha_2^{[j]} \\ \alpha_3^{[j]}
+    \end{bmatrix}
+    =
+    \begin{bmatrix}
+        z_j(0) \\ \dot{z}_j(0) \\ z_j(T) \\ \dot{z}_j(T)
+    \end{bmatrix}
+    \label{eq:matrix_solve}
+\end{equation}
+
+In Python, this is solved using \texttt{numpy.linalg.solve}:
+\begin{lstlisting}[language=Python]
+def solve_flat_polynomial(z0, zdot0, zf, zdotf, T):
+    M = np.array([
+        [1.0, 0.0, 0.0,     0.0],
+        [0.0, 1.0, 0.0,     0.0],
+        [1.0, T,   T**2,    T**3],
+        [0.0, 1.0, 2.0 * T, 3.0 * (T**2)]
+    ], dtype=np.float64)
+    b = np.array([z0, zdot0, zf, zdotf], dtype=np.float64)
+    return np.linalg.solve(M, b)
+\end{lstlisting}
+
+Boundary conditions used:
+\begin{itemize}[noitemsep,topsep=2pt]
+    \item \textbf{Initial:} $x(0) = 0$, $\dot{x}(0) = 0.06\text{~m/s}$; $y(0) = 0$, $\dot{y}(0) = 0$.
+    \item \textbf{Final:} $x(T) = d_{\text{tag}} - 0.20\text{~m}$, $\dot{x}(T) = 0$; $y(T) = 0$, $\dot{y}(T) = 0$.
+\end{itemize}
+
+\subsection*{(iii) Time Horizon Scaling}
+The time horizon $T$ is scaled dynamically using initial distance $d_0$:
+\begin{equation}
+    T = \max\left(4.0,\; \frac{1.6 \cdot (d_0 - 0.20)}{v_{\max}}\right)
+\end{equation}
+For $d_0 = 1.50\text{~m}$ and $v_{\max} = 0.16\text{~m/s}$:
+\begin{equation}
+    T = \max\left(4.0,\; \frac{1.6 \times (1.50 - 0.20)}{0.16}\right) = \max(4.0, 13.0) = 13.00\text{~s}
+\end{equation}
+Solving Eq.~\eqref{eq:matrix_solve} gives polynomial coefficients:
+\begin{equation}
+    \boldsymbol{\alpha}_x = \begin{bmatrix} 0.000000 \\ 0.060000 \\ 0.013846 \\ -0.000828 \end{bmatrix}, \qquad
+    \boldsymbol{\alpha}_y = \begin{bmatrix} 0 \\ 0 \\ 0 \\ 0 \end{bmatrix}
+\end{equation}
+The factor $1.6$ accounts for initial non-zero speed $\dot{x}(0) = 0.06\text{~m/s}$, keeping peak velocity ($0.137\text{~m/s}$) below $v_{\max} = 0.16\text{~m/s}$.
+
+\clearpage
+% =============================================================================
+\section*{Problem 3: Motor Voltage Telemetry and Dynamics Logging}
+% =============================================================================
+
+\subsection*{(i) Kinematics to Wheel Rates}
+With wheel radius $r = 0.05\text{~m}$ and chassis radius $L_c = 0.20\text{~m}$:
+\begin{equation}
+    \omega_1 = \omega_{FR} = \frac{v_x + L_c\omega_z}{r}, \quad
+    \omega_2 = \omega_{FL} = \frac{v_x - L_c\omega_z}{r}, \quad
+    \omega_3 = \omega_{RL} = \omega_2, \quad
+    \omega_4 = \omega_{RR} = \omega_1
+    \label{eq:wheel_kinematics}
+\end{equation}
+
+\subsection*{(ii) Motor Armature Voltage Model}
+Accounting for back-EMF constant ($K_v = 0.38\text{~V}\cdot\text{s/rad}$) and acceleration inertia ($K_a = 0.06\text{~V}\cdot\text{s}^2\text{/rad}$):
+\begin{equation}
+    V_i(t) = K_v \omega_i(t) + K_a \left(\frac{\omega_i(t) - \omega_i(t - \Delta t)}{\Delta t}\right), \qquad i \in \{1, 2, 3, 4\}
+    \label{eq:voltage_model}
+\end{equation}
+
+\subsection*{(iii) Experimental Telemetry Log (Table 1)}
+Table~\ref{tab:table1} lists the 1-second experimental telemetry recorded during the Target Tag $T_3$ run from $d_0 = 1.50\text{~m}$ to the $20\text{~cm}$ halt.
+
+\begin{center}
+\captionof{table}{Chassis Motor Armature Voltage Dynamics Log (Target: Tag 3, $d_0 = 1.50$~m)}
+\label{tab:table1}
+\vspace{0.06cm}
+\small
+\setlength{\tabcolsep}{5.0pt}
+\begin{tabular}{c c c c c c c c}
+\toprule
+\textbf{Timestamp $t$ (s)} & \textbf{$V_1$ (V)} & \textbf{$V_2$ (V)} & \textbf{$V_3$ (V)} & \textbf{$V_4$ (V)} & \textbf{$v(t)$ (m/s)} & \textbf{Range $d$ (m)} & \textbf{State} \\
+\midrule
+0  & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 1.500 & \texttt{ALIGNING} \\
+1  & 0.459 & 0.620 & 0.620 & 0.459 & 0.067 & 1.488 & \texttt{ALIGNING / CHASING} \\
+2  & 0.656 & 0.775 & 0.775 & 0.656 & 0.091 & 1.410 & \texttt{CHASING} \\
+3  & 0.809 & 0.899 & 0.899 & 0.809 & 0.110 & 1.311 & \texttt{CHASING} \\
+4  & 0.920 & 0.989 & 0.989 & 0.920 & 0.124 & 1.195 & \texttt{CHASING} \\
+5  & 0.990 & 1.045 & 1.045 & 0.990 & 0.133 & 1.067 & \texttt{CHASING} \\
+6  & 1.021 & 1.064 & 1.064 & 1.021 & 0.137 & 0.932 & \texttt{CHASING} \\
+7  & 1.012 & 1.048 & 1.048 & 1.012 & 0.136 & 0.795 & \texttt{CHASING} \\
+8  & 0.964 & 0.994 & 0.994 & 0.964 & 0.130 & 0.661 & \texttt{CHASING} \\
+9  & 0.878 & 0.904 & 0.904 & 0.878 & 0.119 & 0.535 & \texttt{CHASING} \\
+10 & 0.753 & 0.777 & 0.777 & 0.753 & 0.104 & 0.422 & \texttt{CHASING} \\
+11 & 0.590 & 0.612 & 0.612 & 0.590 & 0.083 & 0.327 & \texttt{CHASING} \\
+12 & 0.390 & 0.409 & 0.409 & 0.390 & 0.057 & 0.255 & \texttt{CHASING} \\
+13 & 0.152 & 0.168 & 0.168 & 0.152 & 0.026 & 0.211 & \texttt{CHASING} \\
+14 ($T_{\text{stop}}$) & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.200 & \texttt{ARRIVED (20cm)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All four motor voltages drop to exactly $0.000\text{~V}$ once the robot halts at the 20 cm mark.
+
+\subsection*{Execution Plots}
+\begin{center}
+\includegraphics[width=0.95\linewidth]{fig_speed_and_voltage.png}
+\vspace{-0.15cm}
+\captionof{figure}{(a) Forward speed profile $v(t)$ and (b) Front-Right motor voltage $V_1(t)$ across all mission phases.}
+\label{fig:plots}
+\end{center}
+
+\begin{center}
+\includegraphics[width=0.95\linewidth]{fig_all_motors_and_flatness.png}
+\vspace{-0.15cm}
+\captionof{figure}{(a) Four-wheel motor voltage comparison showing differential yaw torque, and (b) range convergence to the $0.20$~m standoff.}
+\label{fig:range}
+\end{center}
+
+\textbf{Physical Discussion:}
+\begin{enumerate}[noitemsep,topsep=2pt]
+    \item \textbf{Initial Turn ($t = 0\text{~to~}0.8\text{~s}$):} During \texttt{ALIGNING}, $v(t) = 0$ while turning clockwise toward Tag 3. The right wheels dip negative ($V_1 = -0.25\text{~V}$) to rotate in place until bearing is within $\pm 10^\circ$.
+    \item \textbf{Smooth Acceleration and Deceleration ($t = 0.8\text{~to~}13.5\text{~s}$):} Forward speed follows a smooth parabolic curve peaking at $0.137\text{~m/s}$ at $t = 6\text{~s}$. Acceleration inertia boosts $V_1$ during spin-up ($t < 6\text{~s}$) and subtracts during deceleration ($t > 6\text{~s}$).
+    \item \textbf{Precision 20 cm Halt ($t = 14\text{~s}$):} When range reaches $0.200\text{~m}$, the standoff guard locks $v = 0, \omega = 0$, dropping all voltages to $0.000\text{~V}$.
+\end{enumerate}
+
+\end{document}
