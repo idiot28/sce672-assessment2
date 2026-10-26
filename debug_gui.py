@@ -47,7 +47,7 @@ DEFAULT_TUNING = {
     "kp_skew": 0.45,
     "tag_size_mm": 48,
     "tof_blocked_thresh_mm": 220,
-    "tof_mode": "AUTO",
+    "tof_mode": "CAM_ONLY",
 }
 
 
@@ -315,11 +315,11 @@ class DebugApp:
             command=lambda: self._push_tuning(force_arm=True)
         ).pack(side=tk.RIGHT)
 
-        # Front ToF Mode Selector (AUTO vs CH0..CH3)
+        # Front ToF Mode Selector (CAM_ONLY vs AUTO vs CH0..CH3)
         tof_sel = tk.Frame(col2, bg="#151c28", pady=1)
         tof_sel.pack(fill=tk.X, pady=(1, 2))
-        tk.Label(tof_sel, text="ToF Mode:", fg="#94a3b8", bg="#151c28", font=("Segoe UI", 7, "bold")).pack(side=tk.LEFT, padx=(0, 2))
-        for m in ("AUTO", "CH0", "CH1", "CH2", "CH3"):
+        tk.Label(tof_sel, text="Sensor:", fg="#94a3b8", bg="#151c28", font=("Segoe UI", 7, "bold")).pack(side=tk.LEFT, padx=(0, 2))
+        for m in ("CAM_ONLY", "AUTO", "CH0", "CH1", "CH2", "CH3"):
             tk.Radiobutton(
                 tof_sel, text=m, variable=self.tof_mode_var, value=m,
                 bg="#151c28", fg="#e2e8f0", selectcolor="#0f1520", activebackground="#151c28",

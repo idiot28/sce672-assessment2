@@ -26,3 +26,9 @@ log/
 Thumbs.db
 Desktop.ini
 *.tmp
+
+# Live telemetry & camera snapshots
+live_camera.jpg
+live_telemetry.json
+tuning_params.json
+

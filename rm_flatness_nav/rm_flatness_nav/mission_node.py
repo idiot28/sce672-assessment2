@@ -529,6 +529,8 @@ class FlatnessMissionNode(Node):
 
     def _is_tof_valid(self, now: float) -> bool:
         """Returns True if the unblocked straight Front ToF sensor has a valid live physical reading."""
+        if self.tof_mode in ("CAM_ONLY", "CAMERA_ONLY"):
+            return False
         ch = self.tof.active_idx
         return (
             (now - self.tof.last_update_time) < 1.5
