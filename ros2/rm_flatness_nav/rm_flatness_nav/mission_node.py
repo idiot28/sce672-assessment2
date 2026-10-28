@@ -224,8 +224,8 @@ class FlatnessMissionNode(Node):
         self.last_seen_odom_y = 0.0
         self.tag_memory = {}
 
-        # Supervisory FSM State + Reverse/Forward Parking Sub-FSM
-        self.state = "SEARCHING"
+        # Supervisory FSM State (Launches directly to TELEOP mode for manual positioning)
+        self.state = "TELEOP"
         self.park_phase = "BACKUP"
         self.park_phase_time = time.monotonic()
         self.park_passes = 0
@@ -273,7 +273,9 @@ class FlatnessMissionNode(Node):
         self.get_logger().info("-" * 72)
 
     def _load_tuning_file(self, initial: bool = False):
-        tpath = os.path.join(self.output_dir, "tuning_params.json")
+        tpath = os.path.join(self.output_dir, "config", "tuning_params.json")
+        if not os.path.exists(tpath):
+            tpath = os.path.join(self.output_dir, "tuning_params.json")
         if not os.path.exists(tpath):
             return
         try:
@@ -708,13 +710,27 @@ class FlatnessMissionNode(Node):
         in_state_s = now - self.state_time
         wasd_active = now < self.manual_until
 
-        # Manual GUI / WASD Keyboard Teleop Override (Strictly Nonholonomic: vy = 0.0)
-        if wasd_active:
-            vx_cmd = self.manual_vx
-            wz_cmd = self.manual_wz
+        # ---------------------------------------------------------------------
+        # 0. TELEOP (STANDBY): Manual Positioning Before Starting Mission
+        # ---------------------------------------------------------------------
+        if self.state == "TELEOP":
+            if wasd_active:
+                vx_cmd = self.manual_vx
+                wz_cmd = self.manual_wz
+                self._halted = False
+            else:
+                vx_cmd = 0.0
+                wz_cmd = 0.0
+                self._halted = True
 
         elif self.estop_paused:
             vx_cmd, wz_cmd = 0.0, 0.0
+            self._halted = True
+
+        elif wasd_active:
+            vx_cmd = self.manual_vx
+            wz_cmd = self.manual_wz
+            self._halted = False
 
         # ---------------------------------------------------------------------
         # 1. SEARCHING: 360-Deg Sweep at user-configured sweep_wz_rad
@@ -937,7 +953,7 @@ class FlatnessMissionNode(Node):
         # Velocity Smoother (Nav2 / EMA style) to prevent jerky wheel step changes,
         # while keeping immediate braking at ARRIVED (20cm) or E-Stop
         sec = int(math.floor(elapsed))
-        halted = ((self.state == "ARRIVED (20cm)") or self.estop_paused) and (not wasd_active)
+        halted = ((self.state in ("ARRIVED (20cm)", "TELEOP")) or self.estop_paused) and (not wasd_active)
         if halted or wasd_active:
             vx_smooth = 0.0 if halted else float(vx_cmd)
             wz_smooth = 0.0 if halted else float(wz_cmd)
@@ -1231,6 +1247,38 @@ class FlatnessMissionNode(Node):
                     f"vmax={self.v_max:.2f} m/s, R={self.turn_radius_m:.2f} m, arm=({self.arm_x_mm},{self.arm_y_mm}) mm, "
                     f"tag_size={self.tag_size_mm} mm, tof_mode={self.tof_mode}"
                 )
+            elif action == "start_mission":
+                now = time.monotonic()
+                with self.lock:
+                    if self.state not in ("SEARCHING", "ALIGNING", "CHASING"):
+                        self.start_time = now
+                        self.state_time = now
+                        self.mission_done = False
+                        self.table1_rows.clear()
+                        self.continuous_rows.clear()
+                        self.odom_trail.clear()
+                        self.last_logged_sec = -1
+                        self._halted = False
+                        self.sweep_rad = 0.0
+                        self.estop_paused = False
+                        if self.tag_visible and abs(self.tag_bearing_rad) <= 0.28:
+                            self._replan_cubic_to_tag(self.tag_dist_m, self.tag_bearing_rad, self.tag_skew_rad, v_curr=self.v_min, log_plan=True)
+                            self.state = "CHASING"
+                            self.get_logger().info(f"[MISSION START] Tag {self.target_tag_id} directly in view. Pursuing flat cubic trajectory!")
+                        else:
+                            self.state = "SEARCHING"
+                            self.get_logger().info(f"[MISSION START] Optical 360-Sweep for Tag {self.target_tag_id} started...")
+            elif action == "return_to_teleop":
+                with self.lock:
+                    self.state = "TELEOP"
+                    self.state_time = time.monotonic()
+                    self.manual_until = 0.0
+                    self.manual_vx = 0.0
+                    self.manual_wz = 0.0
+                    self.vx = 0.0
+                    self.wz = 0.0
+                    self._halted = True
+                    self.get_logger().info("[TELEOP] Switched to Manual Positioning Mode.")
             elif action in ("nudge", "wasd"):
                 vx = float(cmd.get("vx", 0.0))
                 wz = float(cmd.get("wz", 0.0))

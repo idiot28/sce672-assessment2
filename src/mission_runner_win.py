@@ -282,8 +282,8 @@ class WindowsMissionRunner:
         self.last_seen_odom_y = 0.0
         self.tag_memory = {}
 
-        # Supervisory FSM State
-        self.state = "SEARCHING"
+        # Supervisory FSM State (Launches directly to TELEOP mode for manual positioning)
+        self.state = "TELEOP"
         self.park_phase = "BACKUP"
         self.park_phase_time = time.monotonic()
         self.park_passes = 0
@@ -324,10 +324,15 @@ class WindowsMissionRunner:
         # Initialize Hardware or Simulation
         self._init_hardware_or_sim()
 
-        # Background Threads
+        # Background Threads (Camera Grabber decoupled from Vision Worker for ZERO latency)
         self._stop_evt = threading.Event()
-        self._cam_thread = threading.Thread(target=self._camera_loop, daemon=True)
-        self._cam_thread.start()
+        self._new_frame_evt = threading.Event()
+        self.latest_raw_frame = None
+
+        self._grabber_thread = threading.Thread(target=self._camera_grabber_loop, daemon=True)
+        self._grabber_thread.start()
+        self._vision_thread = threading.Thread(target=self._vision_worker_loop, daemon=True)
+        self._vision_thread.start()
         self._act_thread = threading.Thread(target=self._chassis_actuator_loop, daemon=True)
         self._act_thread.start()
 
@@ -537,74 +542,108 @@ class WindowsMissionRunner:
             time.sleep(0.050)
 
     # =========================================================================
-    # Camera Vision Grab & AprilTag Processing Loop (Pure Optical Vision)
     # =========================================================================
-    def _camera_loop(self):
+    # Zero-Latency Hardware Camera Grabber Thread (Full 30 FPS, Zero Processing)
+    # =========================================================================
+    def _camera_grabber_loop(self):
+        """
+        Pure zero-latency camera frame grabber.
+        Pulls newest frame from hardware/sim at full 30 FPS directly into RAM.
+        Zero image processing, zero detection, zero disk I/O.
+        """
         while not self._stop_evt.is_set():
             frame = None
             if self.hw_connected and self.ep_robot is not None:
                 try:
-                    frame = self.ep_robot.camera.read_cv2_image(strategy="newest", timeout=0.08)
+                    frame = self.ep_robot.camera.read_cv2_image(strategy="newest", timeout=0.06)
                 except Exception:
                     frame = None
             elif self.sim is not None:
-                time.sleep(0.025)
+                time.sleep(0.030)
                 frame = self.sim.render_frame()
 
             if frame is not None:
-                now = time.monotonic()
-                dets = self.detector.detect_all(frame, default_id=self.target_tag_id)
-                target_det = None
-
                 with self.lock:
-                    for d in dets:
-                        tid = int(d["id"])
-                        b_rad = float(d["bearing_rad"])
-                        s_rad = float(d["skew_rad"])
-                        d_m = max(0.08, float(d["dist_m"]))
-
-                        # Integrate into 2D World Spatial Tag Memory
-                        world_dir = wrap_angle(self.odom_yaw + b_rad)
-                        tx = self.odom_x + d_m * math.cos(world_dir)
-                        ty = self.odom_y + d_m * math.sin(world_dir)
-
-                        if tid not in self.tag_memory:
-                            self.tag_memory[tid] = {
-                                "x": tx,
-                                "y": ty,
-                                "yaw": world_dir,
-                                "dist_m": d_m,
-                                "skew_rad": s_rad,
-                            }
-                        else:
-                            m = self.tag_memory[tid]
-                            m["x"] = 0.65 * tx + 0.35 * m["x"]
-                            m["y"] = 0.65 * ty + 0.35 * m["y"]
-                            m["yaw"] = math.atan2(m["y"] - self.odom_y, m["x"] - self.odom_x)
-                            m["dist_m"] = math.hypot(m["x"] - self.odom_x, m["y"] - self.odom_y)
-                            m["skew_rad"] = 0.60 * s_rad + 0.40 * m["skew_rad"]
-
-                        if tid == self.target_tag_id:
-                            target_det = d
-
-                    if target_det is not None:
-                        self.tag_visible = True
-                        raw_d = float(target_det["dist_m"])
-                        # Fast asymmetric smoothing (0.80 when closing in, 0.60 when moving away)
-                        alpha_d = 0.80 if raw_d < self.tag_dist_m else 0.60
-                        self.tag_dist_m = alpha_d * raw_d + (1.0 - alpha_d) * self.tag_dist_m
-                        self.tag_bearing_rad = 0.70 * float(target_det["bearing_rad"]) + 0.30 * self.tag_bearing_rad
-                        self.tag_skew_rad = 0.65 * float(target_det["skew_rad"]) + 0.35 * self.tag_skew_rad
-                        self.last_seen_time = now
-                        self.last_seen_dist = float(self.tag_dist_m)
-                        self.last_seen_odom_x = float(self.odom_x)
-                        self.last_seen_odom_y = float(self.odom_y)
-                    else:
-                        self.tag_visible = False
-
-                self._write_gui_stream(frame, dets)
+                    self.latest_raw_frame = frame
+                self._new_frame_evt.set()
             else:
-                time.sleep(0.002)
+                time.sleep(0.003)
+
+    # =========================================================================
+    # Asynchronous Vision Worker (AprilTag Detection Decoupled from Video Display)
+    # =========================================================================
+    def _vision_worker_loop(self):
+        """
+        Runs AprilTag detection and 2D spatial memory updates in background on frame copies.
+        Never blocks the camera grabber thread or GUI display frame rate.
+        """
+        last_file_write = 0.0
+        while not self._stop_evt.is_set():
+            if not self._new_frame_evt.wait(timeout=0.10):
+                continue
+            self._new_frame_evt.clear()
+
+            with self.lock:
+                if self.latest_raw_frame is None:
+                    continue
+                frame_copy = self.latest_raw_frame.copy()
+
+            now = time.monotonic()
+            dets = self.detector.detect_all(frame_copy, default_id=self.target_tag_id)
+            target_det = None
+
+            with self.lock:
+                for d in dets:
+                    tid = int(d["id"])
+                    b_rad = float(d["bearing_rad"])
+                    s_rad = float(d["skew_rad"])
+                    d_m = max(0.08, float(d["dist_m"]))
+
+                    # Integrate into 2D World Spatial Tag Memory
+                    world_dir = wrap_angle(self.odom_yaw + b_rad)
+                    tx = self.odom_x + d_m * math.cos(world_dir)
+                    ty = self.odom_y + d_m * math.sin(world_dir)
+
+                    if tid not in self.tag_memory:
+                        self.tag_memory[tid] = {
+                            "x": tx,
+                            "y": ty,
+                            "yaw": world_dir,
+                            "dist_m": d_m,
+                            "skew_rad": s_rad,
+                        }
+                    else:
+                        m = self.tag_memory[tid]
+                        m["x"] = 0.65 * tx + 0.35 * m["x"]
+                        m["y"] = 0.65 * ty + 0.35 * m["y"]
+                        m["yaw"] = math.atan2(m["y"] - self.odom_y, m["x"] - self.odom_x)
+                        m["dist_m"] = math.hypot(m["x"] - self.odom_x, m["y"] - self.odom_y)
+                        m["skew_rad"] = 0.60 * s_rad + 0.40 * m["skew_rad"]
+
+                    if tid == self.target_tag_id:
+                        target_det = d
+
+                if target_det is not None:
+                    self.tag_visible = True
+                    raw_d = float(target_det["dist_m"])
+                    alpha_d = 0.80 if raw_d < self.tag_dist_m else 0.60
+                    self.tag_dist_m = alpha_d * raw_d + (1.0 - alpha_d) * self.tag_dist_m
+                    self.tag_bearing_rad = 0.70 * float(target_det["bearing_rad"]) + 0.30 * self.tag_bearing_rad
+                    self.tag_skew_rad = 0.65 * float(target_det["skew_rad"]) + 0.35 * self.tag_skew_rad
+                    self.last_seen_time = now
+                    self.last_seen_dist = float(self.tag_dist_m)
+                    self.last_seen_odom_x = float(self.odom_x)
+                    self.last_seen_odom_y = float(self.odom_y)
+                else:
+                    self.tag_visible = False
+
+            # Throttle disk file write to max 10 Hz for external listeners so disk I/O never blocks
+            if (now - last_file_write) >= 0.10:
+                last_file_write = now
+                try:
+                    self._write_gui_stream(frame_copy, dets)
+                except Exception:
+                    pass
 
     # =========================================================================
     # Pure Optical Distance & Spatial Memory Estimator (No ToF Sensor)
@@ -744,14 +783,26 @@ class WindowsMissionRunner:
         wasd_active = now < self.manual_until
 
         # ---------------------------------------------------------------------
-        # Manual WASD Keyboard Teleop Override
+        # 0. TELEOP (STANDBY): Manual Positioning Before Starting Mission
         # ---------------------------------------------------------------------
-        if wasd_active:
-            vx_cmd = self.manual_vx
-            wz_cmd = self.manual_wz
+        if self.state == "TELEOP":
+            if wasd_active:
+                vx_cmd = self.manual_vx
+                wz_cmd = self.manual_wz
+                self._halted = False
+            else:
+                vx_cmd = 0.0
+                wz_cmd = 0.0
+                self._halted = True
 
         elif self.estop_paused:
             vx_cmd, wz_cmd = 0.0, 0.0
+            self._halted = True
+
+        elif wasd_active:
+            vx_cmd = self.manual_vx
+            wz_cmd = self.manual_wz
+            self._halted = False
 
         # ---------------------------------------------------------------------
         # 1. SEARCHING: 360-Degree Sweep (Pure Camera Identification)
@@ -944,7 +995,7 @@ class WindowsMissionRunner:
 
         # Velocity Smoothing
         sec = int(math.floor(elapsed))
-        halted = ((self.state == "ARRIVED (20cm)") or self.estop_paused) and (not wasd_active)
+        halted = ((self.state in ("ARRIVED (20cm)", "TELEOP")) or self.estop_paused) and (not wasd_active)
         if halted or wasd_active:
             vx_smooth = 0.0 if halted else float(vx_cmd)
             wz_smooth = 0.0 if halted else float(wz_cmd)
@@ -1197,6 +1248,10 @@ class WindowsMissionRunner:
             elif action == "update_params":
                 params = cmd.get("params", {})
                 self._apply_tuning_dict(params, move_arm=True)
+            elif action == "start_mission":
+                self.start_mission()
+            elif action == "return_to_teleop":
+                self.return_to_teleop()
             elif action in ("nudge", "wasd"):
                 vx = float(cmd.get("vx", 0.0))
                 wz = float(cmd.get("wz", 0.0))
@@ -1212,6 +1267,129 @@ class WindowsMissionRunner:
                     self.manual_until = time.monotonic() + dur
         except Exception:
             pass
+
+    def start_mission(self):
+        """Transitions from TELEOP standby into autonomous differential flatness pursuit."""
+        now = time.monotonic()
+        with self.lock:
+            if self.state in ("SEARCHING", "ALIGNING", "CHASING"):
+                return
+            self.start_time = now
+            self.state_time = now
+            self.mission_done = False
+            self.table1_rows.clear()
+            self.continuous_rows.clear()
+            self.odom_trail.clear()
+            self.last_logged_sec = -1
+            self._halted = False
+            self.sweep_rad = 0.0
+            self.estop_paused = False
+
+            if self.tag_visible and abs(self.tag_bearing_rad) <= 0.28:
+                self._replan_cubic_to_tag(self.tag_dist_m, self.tag_bearing_rad, self.tag_skew_rad, v_curr=self.v_min, log_plan=True)
+                self.state = "CHASING"
+                print(f"[MISSION START] Tag {self.target_tag_id} directly in view at d={self.tag_dist_m:.2f}m. Pursuing flat cubic path!")
+            else:
+                self.state = "SEARCHING"
+                print(f"[MISSION START] Optical 360-Sweep for Tag {self.target_tag_id} started...")
+
+    def return_to_teleop(self):
+        """Returns to manual teleoperation so the robot can be repositioned."""
+        with self.lock:
+            self.state = "TELEOP"
+            self.state_time = time.monotonic()
+            self.manual_until = 0.0
+            self.manual_vx = 0.0
+            self.manual_wz = 0.0
+            self.vx = 0.0
+            self.wz = 0.0
+            self._halted = True
+            print("[TELEOP] Switched to Manual Positioning Mode. Use W/A/S/D to drive.")
+
+    def manual_drive(self, vx: float, wz: float, duration: float = 0.40):
+        """Commands nonholonomic chassis motion directly in memory (vy is strictly 0.0)."""
+        with self.lock:
+            self.estop_paused = False
+            self.manual_vx = float(np.clip(vx, -self.v_max, self.v_max))
+            self.manual_wz = float(np.clip(wz, -self.align_wz_max, self.align_wz_max))
+            if abs(vx) < 1e-4 and abs(wz) < 1e-4 and duration <= 0.05:
+                self.manual_until = 0.0
+                self.vx = 0.0
+                self.wz = 0.0
+                self._halted = True
+            else:
+                self.manual_until = time.monotonic() + duration
+                self.vx = self.manual_vx
+                self.wz = self.manual_wz
+                self._halted = False
+
+    def get_telemetry_dict(self) -> dict:
+        """Returns live telemetry dictionary directly from RAM without disk file access."""
+        now = time.monotonic()
+        with self.lock:
+            cam_d = self._camera_distance(now)
+            wasd_active = now < self.manual_until
+            if self.estop_paused:
+                gui_state = "PAUSED (E-STOP)"
+            elif wasd_active and self.state != "TELEOP":
+                gui_state = "WASD TELEOP"
+            else:
+                gui_state = self.state
+
+            return {
+                "timestamp": round(now - self.start_time, 2),
+                "mode": "WINDOWS NATIVE (" + self.conn_type.upper() + ")" if self.hw_connected else "WINDOWS SIMULATION",
+                "state": gui_state,
+                "target_tag_id": self.target_tag_id,
+                "sweep_deg": round(min(360.0, math.degrees(self.sweep_rad)), 1),
+                "fused_dist_m": round(float(cam_d), 3),
+                "standoff_goal_m": self.standoff_m,
+                "tag_visible": bool(self.tag_visible),
+                "cam_dist_m": round(float(self.tag_dist_m), 3),
+                "bearing_deg": round(math.degrees(self.tag_bearing_rad), 2),
+                "skew_deg": round(math.degrees(self.tag_skew_rad), 2),
+                "tof_dist_m": round(float(cam_d), 3),
+                "tof_active_ch": 0,
+                "tof_channels_mm": [0, 0, 0, 0],
+                "tof_status": ["CAMERA_ONLY", "CAMERA_ONLY", "CAMERA_ONLY", "CAMERA_ONLY"],
+                "vx": round(float(self.vx), 3),
+                "vy": 0.0,
+                "wz_rad": round(float(self.wz), 3),
+                "wz_deg": round(math.degrees(self.wz), 1),
+                "odom": [round(self.odom_x, 3), round(self.odom_y, 3), round(math.degrees(self.odom_yaw), 1)],
+                "voltages": [round(float(v), 3) for v in self.voltages],
+                "wheel_rads": [round(float(w), 2) for w in self.w_prev],
+                "tuning": {
+                    "sweep_wz_rad": round(self.sweep_wz_rad, 2),
+                    "align_wz_max": round(self.align_wz_max, 2),
+                    "v_max_mps": round(self.v_max, 2),
+                    "v_min_mps": round(self.v_min, 2),
+                    "chase_wz_max": round(self.chase_wz_max, 2),
+                    "turn_radius_m": round(self.turn_radius_m, 2),
+                    "standoff_m": round(self.standoff_m, 2),
+                    "arm_x_mm": self.arm_x_mm,
+                    "arm_y_mm": self.arm_y_mm,
+                    "kp_bearing": round(self.kp_bearing, 2),
+                    "kp_skew": round(self.kp_skew, 2),
+                    "tag_size_mm": self.tag_size_mm,
+                    "tof_blocked_thresh_mm": 220,
+                    "tof_mode": "CAMERA_ONLY",
+                },
+                "tag_memory": {
+                    str(k): {
+                        "x": round(v.get("x", 0.0), 2),
+                        "y": round(v.get("y", 0.0), 2),
+                        "yaw_deg": round(math.degrees(v["yaw"]), 1),
+                        "dist_m": round(v["dist_m"], 2),
+                        "skew_deg": round(math.degrees(v["skew_rad"]), 1),
+                    }
+                    for k, v in self.tag_memory.items()
+                },
+                "planned_path": self.planned_path_pts,
+                "odom_trail": self.odom_trail[-60:],
+                "table1": self.table1_rows[-18:],
+                "trajectory_analysis": self.trajectory_analysis,
+            }
 
     def _save_csv_logs(self):
         try:
@@ -1248,10 +1426,13 @@ class WindowsMissionRunner:
 
     def cleanup(self):
         self._stop_evt.set()
-        if self._cam_thread.is_alive():
-            self._cam_thread.join(timeout=1.0)
-        if self._act_thread.is_alive():
-            self._act_thread.join(timeout=1.0)
+        self._new_frame_evt.set()
+        if hasattr(self, '_grabber_thread') and self._grabber_thread.is_alive():
+            self._grabber_thread.join(timeout=0.8)
+        if hasattr(self, '_vision_thread') and self._vision_thread.is_alive():
+            self._vision_thread.join(timeout=0.8)
+        if hasattr(self, '_act_thread') and self._act_thread.is_alive():
+            self._act_thread.join(timeout=0.8)
         if self.hw_connected and self.ep_robot is not None:
             try:
                 self.ep_robot.chassis.drive_speed(x=0.0, y=0.0, z=0.0, timeout=0.5)

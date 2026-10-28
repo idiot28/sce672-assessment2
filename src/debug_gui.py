@@ -23,6 +23,7 @@ import json
 import math
 import time
 import threading
+import cv2
 import tkinter as tk
 from tkinter import ttk
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -105,8 +106,9 @@ def send_gui_command(action: str, target_tag_id: int = None, params: dict = None
 
 
 class DebugApp:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, runner=None):
         self.root = root
+        self.runner = runner
         self.root.title("DJI RoboMaster EP — v4 Real-Time Camera, Telemetry & Live Tuning GUI")
         self.root.geometry("1280x720")
         self.root.minsize(1050, 580)
@@ -121,11 +123,17 @@ class DebugApp:
         self.tuning = load_tuning()
         self.slider_vars = {}
         self.slider_val_labels = {}
-        self.tof_mode_var = tk.StringVar(value=str(self.tuning.get("tof_mode", "AUTO")))
+        self.tof_mode_var = tk.StringVar(value=str(self.tuning.get("tof_mode", "CAM_ONLY")))
         self.pressed_keys = set()
         self._was_wasd_moving = False
         self.wasd_btns = {}
         self._last_trajectory_analysis = {}
+
+        self.current_state = "TELEOP" if self.runner else "WAITING"
+        self.show_cv2_window = False
+        self._frame_count = 0
+        self._fps_time = time.monotonic()
+        self._fps_val = 0.0
 
         self._build_ui()
         self._bind_keyboard()
@@ -134,7 +142,7 @@ class DebugApp:
 
     def _build_ui(self):
         # =====================================================================
-        # TOP HEADER: State, Target Selection, Restart, Resume, E-Stop
+        # TOP HEADER: State, Target Selection, Start Mission, Return to Teleop, E-Stop
         # =====================================================================
         top = tk.Frame(self.root, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=8, pady=4)
         top.pack(fill=tk.X, padx=8, pady=(6, 3))
@@ -148,7 +156,7 @@ class DebugApp:
         ).pack(anchor="w")
         tk.Label(
             title_box,
-            text="Real-Time 360° Sweep, Flat Cubic Trajectory, Dual Front ToF (20cm Stop) & Motor Voltages",
+            text="Real-Time 360° Sweep, Flat Cubic Trajectory, Standoff & Motor Armature Voltages",
             fg="#94a3b8", bg="#151c28", font=("Segoe UI", 8)
         ).pack(anchor="w")
 
@@ -156,37 +164,47 @@ class DebugApp:
         btn_box.pack(side=tk.RIGHT)
 
         self.lbl_state = tk.Label(
-            btn_box, text="STATE: WAITING...", fg="#00e676", bg="#0f1520",
+            btn_box, text="STATE: 🟢 TELEOP / POSITIONING", fg="#00e676", bg="#0f1520",
             font=("Consolas", 10, "bold"), padx=8, pady=3,
             highlightbackground="#283347", highlightthickness=1
         )
-        self.lbl_state.pack(side=tk.LEFT, padx=(0, 8))
+        self.lbl_state.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Big Prominent Mission Action Button (Starts Mission, Stops Mission, or Returns to Teleop)
+        self.btn_mission_action = tk.Button(
+            btn_box, text="🚀 START AUTONOMOUS MISSION [Space]", bg="#059669", fg="#ffffff",
+            activebackground="#10b981", activeforeground="#ffffff",
+            font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=10, pady=2,
+            command=self._on_action_button_click
+        )
+        self.btn_mission_action.pack(side=tk.LEFT, padx=(0, 6))
+
+        self.btn_teleop_return = tk.Button(
+            btn_box, text="🎮 TELEOP", bg="#1e293b", fg="#38bdf8",
+            activebackground="#334155", font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2,
+            command=self._return_to_teleop
+        )
+        self.btn_teleop_return.pack(side=tk.LEFT, padx=(0, 6))
 
         for tid in (1, 2, 3):
             tk.Button(
                 btn_box, text=f"Target T{tid}", bg="#1e293b", fg="#e2e8f0",
                 activebackground="#334155", activeforeground="#ffffff",
-                font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2,
+                font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=5, pady=2,
                 command=lambda t=tid: self._set_target_tag(t)
-            ).pack(side=tk.LEFT, padx=2)
+            ).pack(side=tk.LEFT, padx=1)
 
         tk.Button(
-            btn_box, text="↻ RESTART MISSION [R]", bg="#0284c7", fg="#ffffff",
-            activebackground="#0369a1", font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
+            btn_box, text="↻ RESTART [R]", bg="#0284c7", fg="#ffffff",
+            activebackground="#0369a1", font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2,
             command=self._restart_mission
-        ).pack(side=tk.LEFT, padx=4)
-
-        tk.Button(
-            btn_box, text="▶ RESUME", bg="#16a34a", fg="#ffffff",
-            activebackground="#15803d", font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
-            command=lambda: send_gui_command("resume")
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=3)
 
         tk.Button(
             btn_box, text="■ E-STOP", bg="#dc2626", fg="#ffffff",
-            activebackground="#b91c1c", font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
+            activebackground="#b91c1c", font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2,
             command=lambda: send_gui_command("estop")
-        ).pack(side=tk.LEFT, padx=(3, 0))
+        ).pack(side=tk.LEFT, padx=(2, 0))
 
         # =====================================================================
         # MAIN 3-COLUMN RESPONSIVE BODY
@@ -209,6 +227,21 @@ class DebugApp:
         ).pack(anchor="w", pady=(0, 2))
         self.cam_label = tk.Label(cam_card, bg="#000000", width=380, height=214)
         self.cam_label.pack()
+
+        cam_ctl = tk.Frame(cam_card, bg="#151c28")
+        cam_ctl.pack(fill=tk.X, pady=(2, 0))
+        self.btn_popout_cv2 = tk.Button(
+            cam_ctl, text="🗖 Pop-out Native Video (OpenCV)",
+            bg="#1e293b", fg="#38bdf8", activebackground="#334155",
+            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=4, pady=1,
+            command=self._toggle_cv2_window
+        )
+        self.btn_popout_cv2.pack(side=tk.LEFT)
+        self.lbl_cam_fps = tk.Label(
+            cam_ctl, text="Native Direct Feed | 0ms Latency",
+            fg="#00e676", bg="#151c28", font=("Consolas", 7)
+        )
+        self.lbl_cam_fps.pack(side=tk.RIGHT)
 
         map_card = tk.Frame(col1, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=4, pady=4)
         map_card.pack(fill=tk.BOTH, expand=True)
@@ -524,15 +557,74 @@ class DebugApp:
         self.root.bind_all("<KeyPress>", self._on_key_press)
         self.root.bind_all("<KeyRelease>", self._on_key_release)
 
+    def _toggle_cv2_window(self):
+        self.show_cv2_window = not self.show_cv2_window
+        if not self.show_cv2_window:
+            try:
+                cv2.destroyWindow("RoboMaster EP - Pure Native Feed")
+            except Exception:
+                pass
+            self.btn_popout_cv2.configure(text="🗖 Pop-out Native Video (OpenCV)", fg="#38bdf8")
+        else:
+            self.btn_popout_cv2.configure(text="✖ Close Native Window", fg="#ffab00")
+
+    def _on_action_button_click(self):
+        if self.current_state in ("TELEOP", "WAITING"):
+            self._start_mission()
+        elif self.current_state in ("SEARCHING", "ALIGNING", "CHASING"):
+            self._return_to_teleop()
+        elif "ARRIVED" in self.current_state:
+            self._return_to_teleop()
+        elif "PAUSED" in self.current_state:
+            if self.runner is not None:
+                self.runner.start_mission()
+            else:
+                send_gui_command("resume")
+        else:
+            self._start_mission()
+
+    def _start_mission(self):
+        self.pressed_keys.clear()
+        self._was_wasd_moving = False
+        self._update_wasd_button_highlights()
+        if self.runner is not None:
+            self.runner.start_mission()
+        else:
+            send_gui_command("start_mission", target_tag_id=self.tuning.get("target_tag_id", 3))
+        self.current_state = "SEARCHING"
+        self.lbl_state.configure(text="⚡ STARTING MISSION...", fg="#00e5ff")
+        self.btn_mission_action.configure(text="🛑 STOP / CANCEL MISSION [Space]", bg="#dc2626")
+
+    def _return_to_teleop(self):
+        self.pressed_keys.clear()
+        self._was_wasd_moving = False
+        self._update_wasd_button_highlights()
+        if self.runner is not None:
+            self.runner.return_to_teleop()
+        else:
+            send_gui_command("return_to_teleop")
+        self.current_state = "TELEOP"
+        self.lbl_state.configure(text="🟢 TELEOP / POSITIONING", fg="#00e676")
+        self.btn_mission_action.configure(text="🚀 START AUTONOMOUS MISSION [Space]", bg="#059669")
+
     def _on_key_press(self, event):
         k = str(event.keysym).lower()
         if k == "r":
             self._restart_mission()
             return
-        if k == "space":
+        if k in ("space", "return"):
             self.pressed_keys.clear()
             self._was_wasd_moving = False
-            send_gui_command("wasd", vx=0.0, wz=0.0, duration=0.0)
+            self._on_action_button_click()
+            self._update_wasd_button_highlights()
+            return
+        if k in ("escape", "x"):
+            self.pressed_keys.clear()
+            self._was_wasd_moving = False
+            if self.runner is not None:
+                self.runner.manual_drive(0.0, 0.0, 0.0)
+            else:
+                send_gui_command("estop")
             self._update_wasd_button_highlights()
             return
         key_map = {"w": "w", "up": "w", "s": "s", "down": "s", "a": "a", "left": "a", "d": "d", "right": "d"}
@@ -557,7 +649,7 @@ class DebugApp:
                 btn.configure(bg="#1e293b", fg=fg_col)
 
     def _send_wasd_from_keys(self):
-        v_max = float(self.tuning.get("v_max_mps", 0.24))
+        v_max = float(self.tuning.get("v_max_mps", 0.28))
         w_max = float(self.tuning.get("align_wz_max", 0.50))
         vx = 0.0
         wz = 0.0
@@ -572,10 +664,16 @@ class DebugApp:
 
         if abs(vx) > 1e-4 or abs(wz) > 1e-4:
             self._was_wasd_moving = True
-            send_gui_command("wasd", vx=vx, wz=wz, duration=0.35)
+            if self.runner is not None:
+                self.runner.manual_drive(vx=vx, wz=wz, duration=0.40)
+            else:
+                send_gui_command("wasd", vx=vx, wz=wz, duration=0.40)
         elif self._was_wasd_moving:
             self._was_wasd_moving = False
-            send_gui_command("wasd", vx=0.0, wz=0.0, duration=0.0)
+            if self.runner is not None:
+                self.runner.manual_drive(vx=0.0, wz=0.0, duration=0.0)
+            else:
+                send_gui_command("wasd", vx=0.0, wz=0.0, duration=0.0)
 
     def _restart_mission(self):
         self.pressed_keys.clear()
@@ -721,36 +819,105 @@ class DebugApp:
         if self.pressed_keys:
             self._send_wasd_from_keys()
 
-        # Update Live Camera Frame
-        if os.path.exists(IMG_PATH):
+        # ---------------------------------------------------------------------
+        # 1. Update Live Camera Frame (Zero Latency Direct Stream)
+        # ---------------------------------------------------------------------
+        got_frame = False
+        if self.runner is not None and getattr(self.runner, "latest_raw_frame", None) is not None:
+            try:
+                raw_frame = self.runner.latest_raw_frame
+                # Pure native display: No processing, instant in-memory blit (<2.5ms)
+                rgb = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(rgb)
+                if pil_img.size != (380, 214):
+                    pil_img = pil_img.resize((380, 214), Image.NEAREST)
+                self._tk_cam_img = ImageTk.PhotoImage(pil_img)
+                self.cam_label.configure(image=self._tk_cam_img)
+                got_frame = True
+
+                self._frame_count += 1
+                t_now = time.monotonic()
+                if (t_now - self._fps_time) >= 1.0:
+                    self._fps_val = self._frame_count / (t_now - self._fps_time)
+                    self._frame_count = 0
+                    self._fps_time = t_now
+                    self.lbl_cam_fps.configure(
+                        text=f"{raw_frame.shape[1]}x{raw_frame.shape[0]} | {self._fps_val:.0f} FPS Native",
+                        fg="#00e676"
+                    )
+
+                if self.show_cv2_window:
+                    cv2.imshow("RoboMaster EP - Pure Native Feed", raw_frame)
+                    cv2.waitKey(1)
+            except Exception:
+                pass
+
+        elif os.path.exists(IMG_PATH):
             try:
                 with open(IMG_PATH, "rb") as f:
                     raw_data = f.read()
                 if raw_data and len(raw_data) > 500:
                     pil_img = Image.open(io.BytesIO(raw_data))
                     if pil_img.size != (380, 214):
-                        pil_img = pil_img.resize((380, 214))
+                        pil_img = pil_img.resize((380, 214), Image.NEAREST)
                     self._tk_cam_img = ImageTk.PhotoImage(pil_img)
                     self.cam_label.configure(image=self._tk_cam_img)
+                    got_frame = True
             except Exception:
                 pass
-        else:
+
+        if not got_frame and self._tk_cam_img is None:
             blank = Image.new("RGB", (380, 214), (15, 21, 32))
             draw = ImageDraw.Draw(blank)
-            draw.text((45, 100), "Waiting for ROS 2 v4 Node (live_camera.jpg)...", fill=(0, 229, 255))
+            draw.text((35, 100), "Waiting for Camera Stream (Zero Latency)...", fill=(0, 229, 255))
             self._tk_cam_img = ImageTk.PhotoImage(blank)
             self.cam_label.configure(image=self._tk_cam_img)
 
-        # Update Telemetry & Voltages
-        if os.path.exists(JSON_PATH):
+        # ---------------------------------------------------------------------
+        # 2. Update Telemetry & State (Direct RAM if unified runner, else JSON)
+        # ---------------------------------------------------------------------
+        d = None
+        if self.runner is not None:
+            try:
+                d = self.runner.get_telemetry_dict()
+            except Exception:
+                d = None
+
+        if d is None and os.path.exists(JSON_PATH):
             try:
                 with open(JSON_PATH, "r", encoding="utf-8") as f:
                     d = json.load(f)
+            except Exception:
+                d = None
 
+        if d is not None:
+            try:
                 st = d.get("state", "IDLE")
+                self.current_state = st
                 ts = d.get("timestamp", 0.0)
-                st_col = "#00e5ff" if "WASD" in st or "FINE_ALIGN" in st else ("#ff5252" if "PAUSED" in st else "#00e676")
-                self.lbl_state.configure(text=f"{st} | t={ts:.1f}s", fg=st_col)
+
+                if st == "TELEOP":
+                    st_col = "#00e676"
+                    disp_text = f"🟢 TELEOP / POSITIONING | t={ts:.1f}s"
+                    self.btn_mission_action.configure(text="🚀 START AUTONOMOUS MISSION [Space]", bg="#059669")
+                elif "WASD" in st:
+                    st_col = "#00e5ff"
+                    disp_text = f"🎮 TELEOP DRIVING | t={ts:.1f}s"
+                    self.btn_mission_action.configure(text="🚀 START AUTONOMOUS MISSION [Space]", bg="#059669")
+                elif "ARRIVED" in st:
+                    st_col = "#00e676"
+                    disp_text = f"🏁 ARRIVED (20cm) | t={ts:.1f}s"
+                    self.btn_mission_action.configure(text="🔄 RETURN TO TELEOP (RE-POSITION) [Space]", bg="#0284c7")
+                elif "PAUSED" in st:
+                    st_col = "#ff5252"
+                    disp_text = f"🛑 PAUSED (E-STOP) | t={ts:.1f}s"
+                    self.btn_mission_action.configure(text="▶ RESUME MISSION [Space]", bg="#16a34a")
+                else:
+                    st_col = "#ffab00" if "SEARCH" in st else "#00e5ff"
+                    disp_text = f"⚡ {st} | t={ts:.1f}s"
+                    self.btn_mission_action.configure(text="🛑 STOP / CANCEL MISSION [Space]", bg="#dc2626")
+
+                self.lbl_state.configure(text=disp_text, fg=st_col)
 
                 ch_mm = d.get("tof_channels_mm", [0, 0, 0, 0])
                 ch_st = d.get("tof_status", ["UNUSED"] * 4)
@@ -873,14 +1040,58 @@ class WebHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="DJI RoboMaster EP Real-Time Telemetry & GUI")
+    parser.add_argument("--conn", choices=["ap", "rndis"], default="ap", help="Connection mode (default: ap)")
+    parser.add_argument("--tag", type=int, default=3, help="Target AprilTag ID (default: 3)")
+    parser.add_argument("--sim", action="store_true", help="Launch native simulation instead of physical robot")
+    parser.add_argument("--external", action="store_true", help="Pure external listener mode (do not connect to hardware directly; listen to WSL/JSON)")
+    parser.add_argument("--vmax", type=float, default=0.38, help="Max speed (m/s)")
+    args = parser.parse_args()
+
     try:
         srv = HTTPServer(("127.0.0.1", 8080), WebHandler)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
     except Exception:
         pass
 
+    runner = None
+    if not args.external:
+        try:
+            from mission_runner_win import WindowsMissionRunner
+            runner = WindowsMissionRunner(
+                conn_type=args.conn,
+                target_tag_id=args.tag,
+                use_sim=args.sim,
+                v_max=args.vmax,
+                output_dir=BASE_DIR
+            )
+            def _runner_loop():
+                while not runner._stop_evt.is_set():
+                    runner.step_control()
+                    time.sleep(0.048)
+            threading.Thread(target=_runner_loop, daemon=True).start()
+        except Exception as e:
+            print(f"[GUI] Note: Direct hardware runner init ({e}). Running in external listener mode.")
+            runner = None
+
     root = tk.Tk()
-    DebugApp(root)
+    app = DebugApp(root, runner=runner)
+
+    def on_closing():
+        if runner is not None:
+            try:
+                runner.cleanup()
+            except Exception:
+                pass
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
+        root.destroy()
+        sys.exit(0)
+
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
 
 

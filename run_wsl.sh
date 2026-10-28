@@ -44,22 +44,34 @@ if [ "$USE_SIM" != "true" ]; then
 fi
 
 echo "======================================================================"
-echo "[*] Syncing & Building ROS 2 Package rm_flatness_nav (v4) in WSL..."
+echo "[*] Syncing & Checking ROS 2 Package rm_flatness_nav (v4) in WSL..."
 echo "======================================================================"
 source /opt/ros/humble/setup.bash
 mkdir -p ~/robomaster_ws/src
-rm -rf ~/robomaster_ws/src/rm_flatness_nav
-if [ -d "${PROJECT_DIR}/ros2/rm_flatness_nav" ]; then
-    cp -r "${PROJECT_DIR}/ros2/rm_flatness_nav" ~/robomaster_ws/src/rm_flatness_nav
-elif [ -d "${PROJECT_DIR}/rm_flatness_nav" ]; then
-    cp -r "${PROJECT_DIR}/rm_flatness_nav" ~/robomaster_ws/src/rm_flatness_nav
+
+BUILD_NEEDED=false
+if [ ! -f ~/robomaster_ws/install/rm_flatness_nav/lib/rm_flatness_nav/mission_node ]; then
+    BUILD_NEEDED=true
 fi
 
-cd ~/robomaster_ws
-colcon build --packages-select rm_flatness_nav --symlink-install
+if [ -d "${PROJECT_DIR}/ros2/rm_flatness_nav" ]; then
+    cp -ru "${PROJECT_DIR}/ros2/rm_flatness_nav" ~/robomaster_ws/src/ 2>/dev/null || cp -r "${PROJECT_DIR}/ros2/rm_flatness_nav" ~/robomaster_ws/src/
+elif [ -d "${PROJECT_DIR}/rm_flatness_nav" ]; then
+    cp -ru "${PROJECT_DIR}/rm_flatness_nav" ~/robomaster_ws/src/ 2>/dev/null || cp -r "${PROJECT_DIR}/rm_flatness_nav" ~/robomaster_ws/src/
+fi
+
+if [ "$BUILD_NEEDED" = "true" ] || [ "${FORCE_BUILD:-false}" = "true" ]; then
+    echo "[*] Compiling ROS 2 package rm_flatness_nav (first-time build)..."
+    cd ~/robomaster_ws
+    colcon build --packages-select rm_flatness_nav --symlink-install
+else
+    echo "[+] ROS 2 package rm_flatness_nav is ready! Launching instantly..."
+fi
 
 source ~/robomaster_ws/install/setup.bash
 export ROS_DOMAIN_ID=0
+export PYTHONUNBUFFERED=1
+export RCUTILS_LOG_STATUS_BUFFERING=0
 export PYTHONPATH="/usr/local/lib/python3.10/dist-packages:/home/raian/.local/lib/python3.10/site-packages:${PYTHONPATH}"
 
 echo "======================================================================"
