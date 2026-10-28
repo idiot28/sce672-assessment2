@@ -1,0 +1,17 @@
+{
+  "target_tag_id": 3,
+  "sweep_wz_rad": 0.35,
+  "align_wz_max": 0.45,
+  "v_max_mps": 0.28,
+  "v_min_mps": 0.08,
+  "chase_wz_max": 0.45,
+  "turn_radius_m": 0.35,
+  "standoff_m": 0.2,
+  "arm_x_mm": 140,
+  "arm_y_mm": 35,
+  "kp_bearing": 1.65,
+  "kp_skew": 0.45,
+  "tag_size_mm": 48,
+  "tof_blocked_thresh_mm": 220,
+  "tof_mode": "CAM_ONLY"
+}

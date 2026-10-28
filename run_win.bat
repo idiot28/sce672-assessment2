@@ -40,16 +40,16 @@ if errorlevel 1 (
     timeout /t 3 /nobreak >nul
 )
 echo [*] Starting Real-Time Debug GUI on Windows...
-start "" python debug_gui.py
+start "" python src\debug_gui.py
 echo [*] Launching Native Windows Mission Runner (Mode: Wi-Fi AP, Target: Tag 3)...
-python mission_runner_win.py --conn ap --tag 3 --vmax 0.38
+python src\mission_runner_win.py --conn ap --tag 3 --vmax 0.38
 goto DONE
 
 :RUN_RNDIS
 echo [*] Starting Real-Time Debug GUI on Windows...
-start "" python debug_gui.py
+start "" python src\debug_gui.py
 echo [*] Launching Native Windows Mission Runner (Mode: USB RNDIS, Target: Tag 3)...
-python mission_runner_win.py --conn rndis --tag 3 --vmax 0.38
+python src\mission_runner_win.py --conn rndis --tag 3 --vmax 0.38
 goto DONE
 
 :RUN_CUSTOM
@@ -58,21 +58,21 @@ if "%C_CONN%"=="" set "C_CONN=ap"
 set /p "C_TAG=Target AprilTag ID (1, 2, or 3) [3]: "
 if "%C_TAG%"=="" set "C_TAG=3"
 echo [*] Starting Real-Time Debug GUI on Windows...
-start "" python debug_gui.py
+start "" python src\debug_gui.py
 echo [*] Launching Native Windows Mission Runner (Mode: %C_CONN%, Target: Tag %C_TAG%)...
-python mission_runner_win.py --conn %C_CONN% --tag %C_TAG% --vmax 0.38
+python src\mission_runner_win.py --conn %C_CONN% --tag %C_TAG% --vmax 0.38
 goto DONE
 
 :RUN_SIM
 echo [*] Starting Real-Time Debug GUI on Windows...
-start "" python debug_gui.py
+start "" python src\debug_gui.py
 echo [*] Launching Native Windows Simulation Mode (Target: Tag 3)...
-python mission_runner_win.py --sim --tag 3 --vmax 0.38
+python src\mission_runner_win.py --sim --tag 3 --vmax 0.38
 goto DONE
 
 :RUN_GUI
 echo [*] Launching Real-Time Debug GUI...
-python debug_gui.py
+python src\debug_gui.py
 goto MENU
 
 :DONE

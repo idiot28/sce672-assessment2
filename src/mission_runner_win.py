@@ -47,7 +47,14 @@ from vision_camera import (
     CameraSimArena,
 )
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..")) if os.path.basename(SCRIPT_DIR) == "src" else SCRIPT_DIR
+BASE_DIR = PROJECT_DIR
+
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
 
 
 # =============================================================================
@@ -333,7 +340,9 @@ class WindowsMissionRunner:
         print("-" * 76)
 
     def _load_tuning_file(self, initial: bool = False):
-        tpath = os.path.join(self.output_dir, "tuning_params.json")
+        tpath = os.path.join(self.output_dir, "config", "tuning_params.json")
+        if not os.path.exists(tpath):
+            tpath = os.path.join(self.output_dir, "tuning_params.json")
         if not os.path.exists(tpath):
             return
         try:

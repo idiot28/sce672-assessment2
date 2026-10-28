@@ -17,6 +17,7 @@ Provides live, code-free tuning controls:
 """
 
 import os
+import sys
 import json
 import math
 import time
@@ -26,11 +27,19 @@ from tkinter import ttk
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from PIL import Image, ImageTk, ImageDraw
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..")) if os.path.basename(SCRIPT_DIR) == "src" else SCRIPT_DIR
+BASE_DIR = PROJECT_DIR
+
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
+
 IMG_PATH = os.path.join(BASE_DIR, "live_camera.jpg")
 JSON_PATH = os.path.join(BASE_DIR, "live_telemetry.json")
 CMD_PATH = os.path.join(BASE_DIR, "gui_command.json")
-TUNING_PATH = os.path.join(BASE_DIR, "tuning_params.json")
+TUNING_PATH = os.path.join(BASE_DIR, "config", "tuning_params.json") if os.path.exists(os.path.join(BASE_DIR, "config", "tuning_params.json")) else os.path.join(BASE_DIR, "tuning_params.json")
 
 DEFAULT_TUNING = {
     "target_tag_id": 3,

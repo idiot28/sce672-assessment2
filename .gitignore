@@ -29,7 +29,13 @@ Desktop.ini
 
 # Live telemetry & camera snapshots
 live_camera.jpg
+live_camera_tmp.jpg
 live_telemetry.json
 live_telemetry_tmp.json
+gui_command.json
 tuning_params.json
+
+# Large packages & wheels
+*.whl
+vendor/*.whl
 

@@ -49,7 +49,11 @@ echo "======================================================================"
 source /opt/ros/humble/setup.bash
 mkdir -p ~/robomaster_ws/src
 rm -rf ~/robomaster_ws/src/rm_flatness_nav
-cp -r "${PROJECT_DIR}/rm_flatness_nav" ~/robomaster_ws/src/rm_flatness_nav
+if [ -d "${PROJECT_DIR}/ros2/rm_flatness_nav" ]; then
+    cp -r "${PROJECT_DIR}/ros2/rm_flatness_nav" ~/robomaster_ws/src/rm_flatness_nav
+elif [ -d "${PROJECT_DIR}/rm_flatness_nav" ]; then
+    cp -r "${PROJECT_DIR}/rm_flatness_nav" ~/robomaster_ws/src/rm_flatness_nav
+fi
 
 cd ~/robomaster_ws
 colcon build --packages-select rm_flatness_nav --symlink-install

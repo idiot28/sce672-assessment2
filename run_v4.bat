@@ -49,23 +49,23 @@ if errorlevel 1 (
     timeout /t 3 /nobreak >nul
 )
 echo [*] Starting Real-Time Debug GUI on Windows...
-start "" python debug_gui.py
+start "" python src\debug_gui.py
 echo [*] Launching Native Windows Mission Runner (Mode: Wi-Fi AP, Camera-Only, Target: Tag 3)...
-python mission_runner_win.py --conn ap --tag 3 --vmax 0.38
+python src\mission_runner_win.py --conn ap --tag 3 --vmax 0.38
 goto DONE
 
 :WIN_RNDIS
 echo [*] Starting Real-Time Debug GUI on Windows...
-start "" python debug_gui.py
+start "" python src\debug_gui.py
 echo [*] Launching Native Windows Mission Runner (Mode: USB RNDIS, Camera-Only, Target: Tag 3)...
-python mission_runner_win.py --conn rndis --tag 3 --vmax 0.38
+python src\mission_runner_win.py --conn rndis --tag 3 --vmax 0.38
 goto DONE
 
 :WIN_SIM
 echo [*] Starting Real-Time Debug GUI on Windows...
-start "" python debug_gui.py
+start "" python src\debug_gui.py
 echo [*] Launching Native Windows Simulation Mode (Camera-Only, Target: Tag 3)...
-python mission_runner_win.py --sim --tag 3 --vmax 0.38
+python src\mission_runner_win.py --sim --tag 3 --vmax 0.38
 goto DONE
 
 :WSL_AP
@@ -77,28 +77,28 @@ if errorlevel 1 (
     timeout /t 3 /nobreak >nul
 )
 echo [*] Starting Real-Time Debug GUI on Windows...
-start "" python debug_gui.py
+start "" python src\debug_gui.py
 echo [*] Launching ROS 2 v4 Node in WSL (Wi-Fi AP Mode, Target: Tag 3)...
 wsl.exe bash -c "sed -i 's/\r$//' '/mnt/d/phd/sce672 - advanced robotics/project apriltag v4/run_wsl.sh' && bash '/mnt/d/phd/sce672 - advanced robotics/project apriltag v4/run_wsl.sh' ap 3 false 0.38"
 goto DONE
 
 :WSL_RNDIS
 echo [*] Starting Real-Time Debug GUI on Windows...
-start "" python debug_gui.py
+start "" python src\debug_gui.py
 echo [*] Launching ROS 2 v4 Node in WSL (USB RNDIS Mode, Target: Tag 3)...
 wsl.exe bash -c "sed -i 's/\r$//' '/mnt/d/phd/sce672 - advanced robotics/project apriltag v4/run_wsl.sh' && bash '/mnt/d/phd/sce672 - advanced robotics/project apriltag v4/run_wsl.sh' rndis 3 false 0.38"
 goto DONE
 
 :WSL_SIM
 echo [*] Starting Real-Time Debug GUI on Windows...
-start "" python debug_gui.py
+start "" python src\debug_gui.py
 echo [*] Launching ROS 2 v4 Node in WSL (Simulation Mode, Target: Tag 3)...
 wsl.exe bash -c "sed -i 's/\r$//' '/mnt/d/phd/sce672 - advanced robotics/project apriltag v4/run_wsl.sh' && bash '/mnt/d/phd/sce672 - advanced robotics/project apriltag v4/run_wsl.sh' ap 3 true 0.38"
 goto DONE
 
 :RUN_GUI
 echo [*] Launching Real-Time Debug GUI...
-python debug_gui.py
+python src\debug_gui.py
 goto MENU
 
 :DONE

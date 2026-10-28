@@ -11,7 +11,9 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..")) if os.path.basename(SCRIPT_DIR) == "src" else SCRIPT_DIR
+REPORT_DIR = os.path.join(PROJECT_DIR, "report")
 PART2_DIR = os.path.join(os.path.dirname(PROJECT_DIR), 'project part 2')
 
 plt.rcParams.update({
@@ -96,7 +98,7 @@ def main():
     ax2.legend(loc='upper right', framealpha=0.92)
 
     plt.tight_layout()
-    out_png = os.path.join(PROJECT_DIR, 'fig_speed_and_voltage.png')
+    out_png = os.path.join(REPORT_DIR, 'fig_speed_and_voltage.png') if os.path.exists(REPORT_DIR) else os.path.join(PROJECT_DIR, 'fig_speed_and_voltage.png')
     plt.savefig(out_png, dpi=300)
     print(f"Clean plot saved successfully to {out_png}")
 
