@@ -91,11 +91,24 @@ class CameraAprilTagDetector:
         except Exception:
             return None, None, None
 
-    def _parse_corners(self, corners, ids, fx: float, fy: float, cx_mid: float, scale: float = 1.0):
+    def _parse_corners(self, corners, ids, fx: float, fy: float, cx_mid: float, cy_mid: float = 180.0, scale: float = 1.0):
         if ids is None or len(ids) == 0:
             return []
         results = []
         seen = set()
+
+        # 3D Tag geometry for solvePnP: planar square marker centered at tag origin
+        s = float(self.tag_size_m)
+        obj_pts = np.array([
+            [-s / 2.0,  s / 2.0, 0.0],
+            [ s / 2.0,  s / 2.0, 0.0],
+            [ s / 2.0, -s / 2.0, 0.0],
+            [-s / 2.0, -s / 2.0, 0.0]
+        ], dtype=np.float64)
+
+        K = np.array([[fx, 0.0, cx_mid], [0.0, fy, cy_mid], [0.0, 0.0, 1.0]], dtype=np.float64)
+        dist_coeffs = np.zeros((4, 1), dtype=np.float64)
+
         for i, raw_id in enumerate(np.asarray(ids).flatten()):
             tid = int(raw_id)
             if tid in seen:
@@ -111,12 +124,43 @@ class CameraAprilTagDetector:
             bearing_rad = -math.atan2(cx - cx_mid, fx)
             skew_rad = self.compute_parallel_skew(pts)
 
+            # Solve 3D Pose and Surface Normal Vector via iterative Perspective-n-Point (solvePnP)
+            try:
+                ret, rvec, tvec = cv2.solvePnP(obj_pts, pts, K, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
+            except Exception:
+                ret, rvec, tvec = False, None, None
+
+            if ret and rvec is not None and tvec is not None and not np.isnan(rvec).any():
+                R, _ = cv2.Rodrigues(rvec)
+                # Outward normal vector pointing out of tag face toward camera (along camera -Z)
+                n_cam = R @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
+                if n_cam[2] > 0.0:
+                    n_cam = -n_cam
+                n_len = float(np.linalg.norm(n_cam))
+                if n_len > 1e-6:
+                    n_cam = n_cam / n_len
+
+                # Tag facing yaw angle in camera horizontal plane (-Z is forward, +X is right)
+                tag_yaw_cam = math.atan2(float(n_cam[0]), -float(n_cam[2]))
+                tvec_flat = tvec.flatten()
+                rvec_flat = rvec.flatten()
+            else:
+                tag_yaw_cam = skew_rad
+                n_cam = np.array([math.sin(skew_rad), 0.0, -math.cos(skew_rad)], dtype=np.float64)
+                tvec_flat = np.array([cx - cx_mid, 0.0, dist_m], dtype=np.float64)
+                rvec_flat = np.zeros(3, dtype=np.float64)
+
             seen.add(tid)
             results.append({
                 "id": tid,
                 "dist_m": dist_m,
                 "bearing_rad": bearing_rad,
                 "skew_rad": skew_rad,
+                "normal_cam": n_cam,
+                "tag_yaw_cam_rad": tag_yaw_cam,
+                "tag_facing_deg": math.degrees(tag_yaw_cam),
+                "tvec_cam": tvec_flat,
+                "rvec_cam": rvec_flat,
                 "bbox": (x1, y1, bw, bh),
                 "corners": pts,
             })
@@ -170,10 +214,11 @@ class CameraAprilTagDetector:
         fx = (w_img / 640.0) * 520.0
         fy = (h_img / 360.0) * 390.0
         cx_mid = w_img / 2.0
+        cy_mid = h_img / 2.0
 
         # Step 1: Ultra-fast primary AprilTag 36h11 detection (5-15 ms)
         corners, ids, _ = self._run_detector(self.primary_detector, gray)
-        dets = self._parse_corners(corners, ids, fx, fy, cx_mid)
+        dets = self._parse_corners(corners, ids, fx, fy, cx_mid, cy_mid=cy_mid)
         if dets:
             return dets
 
@@ -182,7 +227,7 @@ class CameraAprilTagDetector:
         scale = float(w_img) / 640.0 if (w_img != 640) else 1.0
         g_enh = self.clahe.apply(g_small)
         corners_c, ids_c, _ = self._run_detector(self.primary_detector, g_enh)
-        dets_c = self._parse_corners(corners_c, ids_c, fx, fy, cx_mid, scale=scale)
+        dets_c = self._parse_corners(corners_c, ids_c, fx, fy, cx_mid, cy_mid=cy_mid, scale=scale)
         if dets_c:
             return dets_c
 
@@ -190,7 +235,7 @@ class CameraAprilTagDetector:
         if check_aux:
             for _, det in self.aux_detectors:
                 c_aux, ids_aux, _ = self._run_detector(det, g_small)
-                d_aux = self._parse_corners(c_aux, ids_aux, fx, fy, cx_mid, scale=scale)
+                d_aux = self._parse_corners(c_aux, ids_aux, fx, fy, cx_mid, cy_mid=cy_mid, scale=scale)
                 if d_aux:
                     return d_aux
 
@@ -211,11 +256,14 @@ class CameraSimArena:
         self.y = 0.0
         self.yaw = 0.0
 
+        # Tags distributed in the arena, facing toward the arena center
         b0 = math.radians(45.0)
+        b1 = wrap_angle(b0 + 2.1)
+        b2 = wrap_angle(b0 - 2.2)
         self.tags = {
-            self.target_tag_id: {"x": 1.25 * math.cos(b0), "y": 1.25 * math.sin(b0), "yaw": b0},
-            1 if self.target_tag_id != 1 else 2: {"x": 1.40 * math.cos(b0 + 2.1), "y": 1.40 * math.sin(b0 + 2.1), "yaw": wrap_angle(b0 + 2.1)},
-            2 if self.target_tag_id not in (1, 2) else 4: {"x": 1.35 * math.cos(b0 - 2.2), "y": 1.35 * math.sin(b0 - 2.2), "yaw": wrap_angle(b0 - 2.2)},
+            self.target_tag_id: {"x": 1.25 * math.cos(b0), "y": 1.25 * math.sin(b0), "yaw": wrap_angle(b0 + math.pi)},
+            1 if self.target_tag_id != 1 else 2: {"x": 1.40 * math.cos(b1), "y": 1.40 * math.sin(b1), "yaw": wrap_angle(b1 + math.pi)},
+            2 if self.target_tag_id not in (1, 2) else 4: {"x": 1.35 * math.cos(b2), "y": 1.35 * math.sin(b2), "yaw": wrap_angle(b2 + math.pi)},
         }
 
         self.markers = {}
@@ -245,15 +293,16 @@ class CameraSimArena:
             if abs(bearing) > math.radians(45.0):
                 continue
             u = int(cx_mid - fx * math.tan(bearing))
-            px_h = int(np.clip((0.048 * fy) / dist, 16, 220))
-            skew = wrap_angle(self.yaw - t["yaw"])
-            px_w = int(max(14, px_h * max(0.65, math.cos(0.6 * skew))))
+            px_h = int(np.clip((0.048 * fy) / dist, 18, 220))
+            # Slant angle of tag relative to line of sight
+            slant = wrap_angle(self.yaw - (t["yaw"] - math.pi))
+            px_w = int(max(16, px_h * max(0.70, math.cos(0.45 * slant))))
             x1, y1 = u - px_w // 2, int(cy_mid - px_h // 2)
             x2, y2 = x1 + px_w, y1 + px_h
             if 0 <= x1 < x2 <= 640 and 0 <= y1 < y2 <= 360:
                 m = self.markers.get(int(tid))
                 if m is not None:
-                    resized = cv2.resize(m, (x2 - x1, y2 - y1), interpolation=cv2.INTER_NEAREST)
+                    resized = cv2.resize(m, (x2 - x1, y2 - y1), interpolation=cv2.INTER_LINEAR)
                     frame[y1:y2, x1:x2] = cv2.cvtColor(resized, cv2.COLOR_GRAY2BGR)
 
         # Draw robotic arm base silhouette at bottom of camera view

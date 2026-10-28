@@ -921,24 +921,19 @@ class DebugApp:
         c.create_text(px0 + 117, py0 + 10, text="Measured", fill="#00e676", font=("Segoe UI", 7, "bold"), anchor="w")
 
         # Gather points for dynamic bounding box calculation (never clip points!)
-        pts_x = [0.0, 1.50]
-        pts_y = [0.0, 0.0]
-        pts_x.append(float(odom[0]))
-        pts_y.append(float(odom[1]))
+        pts_x = [0.0, float(odom[0])]
+        pts_y = [0.0, float(odom[1])]
 
         path_pts = d.get("planned_path", [])
-        if len(path_pts) < 2:
-            # Fallback: compute nominal planned path immediately so it is drawn BEFORE following!
-            tag_w_x = 1.50
-            tag_w_y = 0.0
-            if mem and tgt_id in mem:
-                tinfo = mem[tgt_id]
-                tag_w_x = float(tinfo.get("x", 1.50))
-                tag_w_y = float(tinfo.get("y", 0.0))
-            pts = []
+        if len(path_pts) < 2 and mem and tgt_id in mem:
+            tinfo = mem[tgt_id]
+            tag_w_x = float(tinfo.get("x", 0.0))
+            tag_w_y = float(tinfo.get("y", 0.0))
+            norm_w = float(tinfo.get("normal_world", wrap_angle(float(tinfo.get("yaw_deg", 0.0)) * math.pi / 180.0 + math.pi)))
+            gx = tag_w_x + 0.20 * math.cos(norm_w)
+            gy = tag_w_y + 0.20 * math.sin(norm_w)
             rx0, ry0 = float(odom[0]), float(odom[1])
-            gx = tag_w_x - 0.20
-            gy = tag_w_y
+            pts = []
             for i in range(20):
                 s = i / 19.0
                 h = s * s * (3.0 - 2.0 * s)
@@ -948,6 +943,11 @@ class DebugApp:
         for pt in path_pts:
             pts_x.append(pt[0])
             pts_y.append(pt[1])
+
+        if mem:
+            for tinfo in mem.values():
+                pts_x.append(float(tinfo.get("x", 0.0)))
+                pts_y.append(float(tinfo.get("y", 0.0)))
 
         trail = d.get("odom_trail", [])
         if trail:
@@ -964,13 +964,21 @@ class DebugApp:
                     pts_x.append(pt[0])
                     pts_y.append(pt[1])
 
-        min_x = min(min(pts_x) - 0.20, -0.20)
-        max_x = max(max(pts_x) + 0.25, 1.75)
-        span_x = max(max_x - min_x, 1.5)
+        min_x = min(pts_x) - 0.20
+        max_x = max(pts_x) + 0.25
+        if (max_x - min_x) < 1.20:
+            cx_mid = 0.5 * (min_x + max_x)
+            min_x = cx_mid - 0.60
+            max_x = cx_mid + 0.60
+        span_x = max(max_x - min_x, 0.80)
 
-        min_y = min(min(pts_y) - 0.25, -0.55)
-        max_y = max(max(pts_y) + 0.25, 0.55)
-        span_y = max(max_y - min_y, 0.90)
+        min_y = min(pts_y) - 0.25
+        max_y = max(pts_y) + 0.25
+        if (max_y - min_y) < 1.00:
+            cy_mid = 0.5 * (min_y + max_y)
+            min_y = cy_mid - 0.50
+            max_y = cy_mid + 0.50
+        span_y = max(max_y - min_y, 0.80)
 
         def to_canvas(wx, wy):
             u = px0 + 14 + ((wx - min_x) / span_x) * (pw - 28)
@@ -985,21 +993,36 @@ class DebugApp:
         # Draw detected tags or target tag
         if mem:
             for tid_k, tinfo in mem.items():
-                tx_w = float(tinfo.get("x", 1.50))
+                tx_w = float(tinfo.get("x", 0.0))
                 ty_w = float(tinfo.get("y", 0.0))
                 u_tag, v_tag = to_canvas(tx_w, ty_w)
-                is_tgt = (str(tid_k) == tgt_id)
+                is_tgt = (str(tid_k) == str(tgt_id))
                 tag_col = "#ef4444" if is_tgt else "#f59e0b"
-                c.create_rectangle(u_tag - 5, v_tag - 7, u_tag + 5, v_tag + 7, fill=tag_col, outline="#ffffff")
-                c.create_text(u_tag, v_tag - 12, text=f"Tag {tid_k}" + (" (TGT)" if is_tgt else ""), fill=tag_col, font=("Segoe UI", 6, "bold"))
-        else:
-            tag_x, tag_y = to_canvas(1.50, 0.0)
-            c.create_rectangle(tag_x - 5, tag_y - 8, tag_x + 5, tag_y + 8, fill="#ef4444", outline="#ffffff")
-            c.create_text(tag_x, tag_y - 13, text=f"Tag {tgt_id} (1.5m)", fill="#ef4444", font=("Segoe UI", 6, "bold"))
 
-        goal_x, goal_y = to_canvas(1.30, 0.0)
-        c.create_line(goal_x, goal_y - 10, goal_x, goal_y + 10, fill="#10b981", width=2, dash=(2, 2))
-        c.create_text(goal_x, goal_y + 13, text="Goal (20cm)", fill="#10b981", font=("Segoe UI", 6))
+                # Tag face outward normal vector
+                norm_w = float(tinfo.get("normal_world", wrap_angle(float(tinfo.get("yaw_deg", 0.0)) * math.pi / 180.0 + math.pi)))
+                u_norm, v_norm = to_canvas(tx_w + 0.14 * math.cos(norm_w), ty_w + 0.14 * math.sin(norm_w))
+
+                # Draw tag body
+                c.create_rectangle(u_tag - 6, v_tag - 8, u_tag + 6, v_tag + 8, fill=tag_col, outline="#ffffff", width=1.5)
+                # Draw outward normal arrow pointing out from tag face
+                c.create_line(u_tag, v_tag, u_norm, v_norm, fill=tag_col, width=2, arrow=tk.LAST)
+                facing_deg = float(tinfo.get("facing_deg", math.degrees(norm_w)))
+                c.create_text(u_tag, v_tag - 14, text=f"Tag {tid_k}" + (" (TGT)" if is_tgt else "") + f" [{facing_deg:+.0f}°]", fill=tag_col, font=("Segoe UI", 6, "bold"))
+
+                if is_tgt:
+                    # Standoff goal point 20cm along tag face normal
+                    gx = tx_w + 0.20 * math.cos(norm_w)
+                    gy = ty_w + 0.20 * math.sin(norm_w)
+                    u_goal, v_goal = to_canvas(gx, gy)
+                    # Green standoff goal circle
+                    c.create_oval(u_goal - 5, v_goal - 5, u_goal + 5, v_goal + 5, outline="#10b981", width=2)
+                    c.create_text(u_goal, v_goal + 12, text="20cm Goal", fill="#10b981", font=("Segoe UI", 6, "bold"))
+                    # Dashed green sightline directly connecting standoff point to tag face!
+                    c.create_line(u_goal, v_goal, u_tag, v_tag, fill="#10b981", width=1.5, dash=(2, 2))
+        else:
+            # Tag NOT yet discovered! Never draw fake Tag 3 or fake path!
+            c.create_text(px0 + pw // 2, py0 + 24, text=f"Target Tag {tgt_id} not discovered yet — Scanning 360°", fill="#64748b", font=("Segoe UI", 8, "italic"))
 
         # 1. Draw Past History Trails (subtle dark green, persistent)
         for htrail in self.history_trails:

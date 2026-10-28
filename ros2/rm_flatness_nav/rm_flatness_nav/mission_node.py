@@ -259,8 +259,8 @@ class FlatnessMissionNode(Node):
         self.continuous_rows = []
         self.last_logged_sec = -1
 
-        # Pre-compute nominal planned path so it is drawn immediately before mission starts
-        self._replan_cubic_to_tag(1.50, 0.0, 0.0, v_curr=self.v_min, log_plan=False)
+        # Do NOT pre-compute a fake path before discovering the target tag
+        self.planned_path_pts = []
 
         self._init_hardware_or_sim()
 
@@ -1586,8 +1586,9 @@ class FlatnessMissionNode(Node):
                     if mem_rel is not None:
                         self._replan_cubic_to_tag(mem_rel[0], mem_rel[1], mem_rel[2], v_curr=self.v_min, log_plan=False)
                     else:
-                        self._replan_cubic_to_tag(1.50, 0.0, 0.0, v_curr=self.v_min, log_plan=False)
-                self.get_logger().info(f"[GUI] Switched Target Tag to T{self.target_tag_id} and pre-computed planned path.")
+                        self.planned_path_pts = []
+                        self.trajectory_analysis = {}
+                self.get_logger().info(f"[GUI] Switched Target Tag to T{self.target_tag_id}.")
             elif action == "update_params":
                 params = cmd.get("params", {})
                 self._apply_tuning_dict(params, move_arm=True)

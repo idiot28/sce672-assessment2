@@ -93,24 +93,34 @@ def compute_trajectory_matrices(
     v0: float = 0.16,
     v_max: float = 0.38,
     vf: float = 0.05,
+    tag_normal_rad: float = None,
 ) -> dict:
     """
     Computes all mathematical matrices, boundary vectors, solved polynomial
     coefficients, and closed-form equations for Assessment 2 differential flatness.
-    Terminal velocity is aligned with the tag normal vector:
-        zdotf_x = vf * cos(goal_heading),  zdotf_y = vf * sin(goal_heading)
+    Terminal velocity is aligned with the tag face normal to ensure the robot and
+    tag are squarely face-to-face (their bearings 180 degrees opposing):
+        zdotf_x = vf * cos(arrival_heading),  zdotf_y = vf * sin(arrival_heading)
     Guarantees the robot arrives directly perpendicular to the tag face (0 deg skew).
     """
     T = compute_time_horizon(d0, v_max=v_max)
     x_tag = d0 * math.cos(bearing_rad)
     y_tag = d0 * math.sin(bearing_rad)
-    goal_heading = wrap_angle(bearing_rad - 0.25 * skew_rad) if abs(skew_rad) > 0.04 else bearing_rad
-    xf = max(0.08, x_tag - standoff_m * math.cos(goal_heading))
-    yf = y_tag - standoff_m * math.sin(goal_heading)
 
-    face_tag_heading = math.atan2(y_tag - yf, max(0.01, x_tag - xf))
-    zdotf_x = vf * math.cos(face_tag_heading)
-    zdotf_y = vf * math.sin(face_tag_heading)
+    # Outward normal of tag face in robot body frame
+    if tag_normal_rad is not None:
+        psi_normal = float(tag_normal_rad)
+    else:
+        psi_normal = wrap_angle(bearing_rad + math.pi + float(skew_rad))
+
+    # Standoff point 20 cm in front of the tag along outward normal
+    xf = x_tag + standoff_m * math.cos(psi_normal)
+    yf = y_tag + standoff_m * math.sin(psi_normal)
+
+    # Arrival heading strictly face-to-face (180 deg opposing tag normal)
+    arrival_heading = wrap_angle(psi_normal + math.pi)
+    zdotf_x = vf * math.cos(arrival_heading)
+    zdotf_y = vf * math.sin(arrival_heading)
 
     M = compute_boundary_matrix(T)
     M_inv = compute_boundary_matrix_inv(T)
@@ -122,6 +132,7 @@ def compute_trajectory_matrices(
     J = get_mecanum_jacobian()
 
     # Format analytical polynomial equation strings
+    # x(t) = a0 + a1*t + a2*t^2 + a3*t^3
     def _poly_str(coeffs, var="t"):
         terms = []
         terms.append(f"{coeffs[0]:+.4f}")
@@ -130,9 +141,12 @@ def compute_trajectory_matrices(
         terms.append(f"{coeffs[3]:+.4f}*{var}^3")
         return " ".join(terms)
 
+    # Derivatives
+    # xdot(t) = a1 + 2*a2*t + 3*a3*t^2
     def _vel_str(coeffs, var="t"):
         return f"{coeffs[1]:+.4f} + ({2.0*coeffs[2]:+.4f})*{var} + ({3.0*coeffs[3]:+.4f})*{var}^2"
 
+    # xddot(t) = 2*a2 + 6*a3*t
     def _acc_str(coeffs, var="t"):
         return f"{2.0*coeffs[2]:+.4f} + ({6.0*coeffs[3]:+.4f})*{var}"
 
@@ -150,7 +164,7 @@ def compute_trajectory_matrices(
         "skew_deg": round(math.degrees(skew_rad), 2),
         "standoff_m": round(float(standoff_m), 4),
         "T_s": round(float(T), 4),
-        "goal_pose": {"xf_m": round(float(xf), 4), "yf_m": round(float(yf), 4), "heading_deg": round(math.degrees(goal_heading), 2)},
+        "goal_pose": {"xf_m": round(float(xf), 4), "yf_m": round(float(yf), 4), "heading_deg": round(math.degrees(arrival_heading), 2)},
         "boundary_matrix_M": M.tolist(),
         "boundary_matrix_M_inv": M_inv.tolist(),
         "boundary_vector_bx": bx.tolist(),
@@ -347,14 +361,15 @@ def plan_aligning_cubic_path(
     v0: float = 0.16,
     v_max: float = 0.38,
     vf: float = 0.05,
+    tag_normal_rad: float = None,
 ):
     """
-    Plans a 2D flat cubic trajectory z(t) = [x(t), y(t)]^T in the robot's initial chase frame
-    that moves from (0, 0) to the 20 cm standoff point directly in front of the tag,
-    curving smoothly so the robot arrives directly aligned and perpendicular to the tag.
-    Terminal velocity tangent vector is constrained along the tag normal:
-        xdot(T) = vf * cos(goal_heading)
-        ydot(T) = vf * sin(goal_heading)
+    Plans a 2D flat cubic trajectory z(t) = [x(t), y(t)]^T in the robot's local body frame
+    that moves from (0, 0) to the 20 cm standoff point directly along the tag face normal,
+    curving smoothly so the robot arrives directly face-to-face (bearings 180 deg opposing).
+    Terminal velocity tangent vector is constrained directly into the tag face:
+        xdot(T) = vf * cos(arrival_heading)
+        ydot(T) = vf * sin(arrival_heading)
     """
     T = compute_time_horizon(d0, v_max=v_max)
 
@@ -362,23 +377,27 @@ def plan_aligning_cubic_path(
     x_tag = d0 * math.cos(bearing_rad)
     y_tag = d0 * math.sin(bearing_rad)
 
-    # Desired final heading: point directly at the tag center from standoff
-    goal_heading = wrap_angle(bearing_rad - 0.25 * skew_rad) if abs(skew_rad) > 0.04 else bearing_rad
+    # Outward normal of tag face in robot body frame
+    if tag_normal_rad is not None:
+        psi_normal = float(tag_normal_rad)
+    else:
+        psi_normal = wrap_angle(bearing_rad + math.pi + float(skew_rad))
 
-    # Standoff point 20 cm in front of the tag along goal_heading
-    xf = max(0.08, x_tag - standoff_m * math.cos(goal_heading))
-    yf = y_tag - standoff_m * math.sin(goal_heading)
+    # Standoff point 20 cm in front of the tag along outward normal
+    xf = x_tag + standoff_m * math.cos(psi_normal)
+    yf = y_tag + standoff_m * math.sin(psi_normal)
 
-    # Terminal tangent velocity components aligned directly to face the tag
-    face_tag_heading = math.atan2(y_tag - yf, max(0.01, x_tag - xf))
-    zdotf_x = vf * math.cos(face_tag_heading)
-    zdotf_y = vf * math.sin(face_tag_heading)
+    # Robot arrival heading strictly face-to-face (180 deg opposing tag normal)
+    arrival_heading = wrap_angle(psi_normal + math.pi)
+    zdotf_x = vf * math.cos(arrival_heading)
+    zdotf_y = vf * math.sin(arrival_heading)
 
     # Boundary conditions:
     # Start (t=0): x(0)=0, y(0)=0, moving straight forward: xdot(0)=v0, ydot(0)=0
-    # End   (t=T): x(T)=xf, y(T)=yf, arriving aligned with goal_heading tangent: xdot(T)=zdotf_x, ydot(T)=zdotf_y
+    # End   (t=T): x(T)=xf, y(T)=yf, arriving aligned with arrival_heading tangent: xdot(T)=zdotf_x, ydot(T)=zdotf_y
     alpha_x = solve_flat_polynomial(0.0, v0, xf, zdotf_x, T)
     alpha_y = solve_flat_polynomial(0.0, 0.0, yf, zdotf_y, T)
+    return alpha_x, alpha_y, T, xf, yf
     return alpha_x, alpha_y, T, xf, yf
 
 

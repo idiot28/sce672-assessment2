@@ -278,6 +278,8 @@ class WindowsMissionRunner:
         self.tag_dist_m = 1.25
         self.tag_bearing_rad = 0.0
         self.tag_skew_rad = 0.0
+        self.tag_normal_bot_rad = math.pi
+        self.tag_normal_world_rad = math.pi
         self.last_seen_time = 0.0
         self.last_seen_dist = 2.0
         self.last_seen_odom_x = 0.0
@@ -324,8 +326,8 @@ class WindowsMissionRunner:
         if target_tag_id is not None:
             self.target_tag_id = int(target_tag_id)
 
-        # Pre-compute nominal planned path so it is drawn immediately before mission starts
-        self._replan_cubic_to_tag(1.50, 0.0, 0.0, v_curr=self.v_min, log_plan=False)
+        # Do NOT pre-compute a fake path before discovering the target tag
+        self.planned_path_pts = []
 
         # Initialize Hardware or Simulation
         self._init_hardware_or_sim()
@@ -645,13 +647,30 @@ class WindowsMissionRunner:
                     tx = self.odom_x + d_m * math.cos(world_dir)
                     ty = self.odom_y + d_m * math.sin(world_dir)
 
+                    # Compute tag face outward normal vector from PnP / skewness
+                    n_cam = d.get("normal_cam")
+                    if n_cam is not None:
+                        # Convert camera frame normal (+Z forward, +X right) to robot frame (+X forward, +Y left)
+                        n_bot_x = float(n_cam[2])
+                        n_bot_y = -float(n_cam[0])
+                        psi_norm_bot = math.atan2(n_bot_y, n_bot_x)
+                        psi_norm_world = wrap_angle(self.odom_yaw + psi_norm_bot)
+                    else:
+                        psi_norm_bot = wrap_angle(b_rad + math.pi + s_rad)
+                        psi_norm_world = wrap_angle(self.odom_yaw + psi_norm_bot)
+
                     if tid not in self.tag_memory:
                         self.tag_memory[tid] = {
                             "x": tx,
                             "y": ty,
                             "yaw": world_dir,
+                            "normal_world": psi_norm_world,
+                            "normal_bot": psi_norm_bot,
+                            "facing_deg": round(math.degrees(psi_norm_world), 1),
                             "dist_m": d_m,
                             "skew_rad": s_rad,
+                            "normal_cam": n_cam.tolist() if isinstance(n_cam, np.ndarray) else n_cam,
+                            "tvec_cam": [round(float(v), 3) for v in d.get("tvec_cam", [0, 0, 0])],
                         }
                     else:
                         m = self.tag_memory[tid]
@@ -660,6 +679,14 @@ class WindowsMissionRunner:
                         m["yaw"] = math.atan2(m["y"] - self.odom_y, m["x"] - self.odom_x)
                         m["dist_m"] = math.hypot(m["x"] - self.odom_x, m["y"] - self.odom_y)
                         m["skew_rad"] = 0.60 * s_rad + 0.40 * m["skew_rad"]
+                        prev_nw = m.get("normal_world", psi_norm_world)
+                        m["normal_world"] = wrap_angle(prev_nw + 0.65 * wrap_angle(psi_norm_world - prev_nw))
+                        m["normal_bot"] = psi_norm_bot
+                        m["facing_deg"] = round(math.degrees(m["normal_world"]), 1)
+                        if n_cam is not None:
+                            m["normal_cam"] = n_cam.tolist() if isinstance(n_cam, np.ndarray) else n_cam
+                        if d.get("tvec_cam") is not None:
+                            m["tvec_cam"] = [round(float(v), 3) for v in d["tvec_cam"]]
 
                     if tid == self.target_tag_id:
                         target_det = d
@@ -671,6 +698,15 @@ class WindowsMissionRunner:
                     self.tag_dist_m = alpha_d * raw_d + (1.0 - alpha_d) * self.tag_dist_m
                     self.tag_bearing_rad = 0.70 * float(target_det["bearing_rad"]) + 0.30 * self.tag_bearing_rad
                     self.tag_skew_rad = 0.65 * float(target_det["skew_rad"]) + 0.35 * self.tag_skew_rad
+                    n_c = target_det.get("normal_cam")
+                    if n_c is not None:
+                        n_bx = float(n_c[2])
+                        n_by = -float(n_c[0])
+                        self.tag_normal_bot_rad = math.atan2(n_by, n_bx)
+                        self.tag_normal_world_rad = wrap_angle(self.odom_yaw + self.tag_normal_bot_rad)
+                    else:
+                        self.tag_normal_bot_rad = wrap_angle(self.tag_bearing_rad + math.pi + self.tag_skew_rad)
+                        self.tag_normal_world_rad = wrap_angle(self.odom_yaw + self.tag_normal_bot_rad)
                     self.last_seen_time = now
                     self.last_seen_dist = float(self.tag_dist_m)
                     self.last_seen_odom_x = float(self.odom_x)
@@ -727,12 +763,15 @@ class WindowsMissionRunner:
         rel_bearing = wrap_angle(world_angle - self.odom_yaw)
         m["yaw"] = world_angle
         m["dist_m"] = rel_dist
-        return rel_dist, rel_bearing, m["skew_rad"]
+        norm_world = m.get("normal_world", wrap_angle(world_angle + math.pi + m["skew_rad"]))
+        norm_bot = wrap_angle(norm_world - self.odom_yaw)
+        return rel_dist, rel_bearing, m["skew_rad"], norm_bot, norm_world
 
-    def record_initial_poses_before_planning(self, dist_m: float, bearing_rad: float, skew_rad: float, v0: float):
+    def record_initial_poses_before_planning(self, dist_m: float, bearing_rad: float, skew_rad: float, v0: float, tag_normal_rad: float = None):
         """
         Records the exact 2D world pose of the robot and all detected AprilTags
         immediately before starting cubic path planning and execution.
+        Enforces face-to-face boundary conditions (bearings 180 deg opposing).
         """
         import datetime
         now_dt = datetime.datetime.now()
@@ -751,14 +790,23 @@ class WindowsMissionRunner:
         tag_world_x = self.odom_x + dist_m * math.cos(world_tag_dir)
         tag_world_y = self.odom_y + dist_m * math.sin(world_tag_dir)
 
-        # Standoff goal in world coordinates
-        d0_clamped = max(self.standoff_m + 0.04, float(dist_m))
-        xf_rob = d0_clamped - self.standoff_m
-        yf_rob = 0.0
+        if tag_normal_rad is not None:
+            psi_norm_bot = float(tag_normal_rad)
+        else:
+            psi_norm_bot = wrap_angle(bearing_rad + math.pi + float(skew_rad))
+        psi_norm_world = wrap_angle(self.odom_yaw + psi_norm_bot)
+        arrival_heading_world = wrap_angle(psi_norm_world + math.pi)
+
+        # Standoff goal in world coordinates: exactly 20cm along tag face outward normal
+        goal_world_x = tag_world_x + self.standoff_m * math.cos(psi_norm_world)
+        goal_world_y = tag_world_y + self.standoff_m * math.sin(psi_norm_world)
+
         c_yaw = math.cos(self.odom_yaw)
         s_yaw = math.sin(self.odom_yaw)
-        goal_world_x = self.odom_x + xf_rob * c_yaw - yf_rob * s_yaw
-        goal_world_y = self.odom_y + xf_rob * s_yaw + yf_rob * c_yaw
+        dx_g = goal_world_x - self.odom_x
+        dy_g = goal_world_y - self.odom_y
+        xf_rob = dx_g * c_yaw + dy_g * s_yaw
+        yf_rob = -dx_g * s_yaw + dy_g * c_yaw
 
         target_info = {
             "tag_id": int(self.target_tag_id),
@@ -770,9 +818,12 @@ class WindowsMissionRunner:
             "world_x_m": round(float(tag_world_x), 4),
             "world_y_m": round(float(tag_world_y), 4),
             "world_yaw_deg": round(math.degrees(world_tag_dir), 2),
+            "tag_normal_world_deg": round(math.degrees(psi_norm_world), 2),
+            "arrival_heading_world_deg": round(math.degrees(arrival_heading_world), 2),
             "standoff_m": round(float(self.standoff_m), 4),
             "standoff_world_x_m": round(float(goal_world_x), 4),
             "standoff_world_y_m": round(float(goal_world_y), 4),
+            "face_to_face_target_deg": 180.0,
         }
 
         # 3. All Tags in 2D Spatial Memory
@@ -789,6 +840,7 @@ class WindowsMissionRunner:
                 "world_x_m": round(tx, 4),
                 "world_y_m": round(ty, 4),
                 "world_yaw_deg": round(math.degrees(tinfo.get("yaw", 0.0)), 2),
+                "normal_world_deg": round(math.degrees(tinfo.get("normal_world", wrap_angle(tinfo.get("yaw", 0.0) + math.pi))), 2),
                 "rel_dist_m": round(rel_d, 4),
                 "rel_bearing_deg": round(math.degrees(rel_brg), 2),
                 "rel_skew_deg": round(math.degrees(tinfo.get("skew_rad", 0.0)), 2),
@@ -803,12 +855,14 @@ class WindowsMissionRunner:
                 "world_x_m": round(float(tag_world_x), 4),
                 "world_y_m": round(float(tag_world_y), 4),
                 "world_yaw_deg": round(math.degrees(world_tag_dir), 2),
+                "normal_world_deg": round(math.degrees(psi_norm_world), 2),
                 "rel_dist_m": round(float(dist_m), 4),
                 "rel_bearing_deg": round(math.degrees(bearing_rad), 2),
                 "rel_skew_deg": round(math.degrees(skew_rad), 2),
                 "is_target": True,
             }
 
+        d0_clamped = max(self.standoff_m + 0.04, float(dist_m))
         snapshot = {
             "timestamp_iso": now_dt.isoformat(),
             "timestamp_s": round(time.time(), 3),
@@ -822,6 +876,7 @@ class WindowsMissionRunner:
                 "v0_mps": round(float(v0), 4),
                 "xf_rel_m": round(xf_rob, 4),
                 "yf_rel_m": round(yf_rob, 4),
+                "arrival_heading_world_deg": round(math.degrees(arrival_heading_world), 2),
             }
         }
 
@@ -842,12 +897,12 @@ class WindowsMissionRunner:
         # Print formatted report to console
         print("\n" + format_initial_poses_report(snapshot) + "\n")
 
-    def _replan_cubic_to_tag(self, dist_m: float, bearing_rad: float, skew_rad: float, v_curr: float, log_plan: bool = False):
+    def _replan_cubic_to_tag(self, dist_m: float, bearing_rad: float, skew_rad: float, v_curr: float, tag_normal_rad: float = None, log_plan: bool = False):
         d0 = max(self.standoff_m + 0.04, float(dist_m))
         v0 = max(self.v_min, min(self.v_max, float(v_curr)))
 
         if log_plan:
-            self.record_initial_poses_before_planning(dist_m, bearing_rad, skew_rad, v0=v0)
+            self.record_initial_poses_before_planning(dist_m, bearing_rad, skew_rad, v0=v0, tag_normal_rad=tag_normal_rad)
 
         self.alpha_x, self.alpha_y, self.cubic_T, xf, yf = plan_aligning_cubic_path(
             d0=d0,
@@ -856,6 +911,7 @@ class WindowsMissionRunner:
             standoff_m=self.standoff_m,
             v0=v0,
             v_max=self.v_max,
+            tag_normal_rad=tag_normal_rad,
         )
 
         self.trajectory_analysis = compute_trajectory_matrices(
@@ -865,6 +921,7 @@ class WindowsMissionRunner:
             standoff_m=self.standoff_m,
             v0=v0,
             v_max=self.v_max,
+            tag_normal_rad=tag_normal_rad,
         )
 
         pts = []
@@ -925,12 +982,15 @@ class WindowsMissionRunner:
             if vis:
                 bearing = self.tag_bearing_rad
                 skew = self.tag_skew_rad
+                tag_norm_bot = self.tag_normal_bot_rad
             elif mem_rel is not None:
                 bearing = mem_rel[1]
                 skew = mem_rel[2]
+                tag_norm_bot = mem_rel[3]
             else:
                 bearing = 0.0
                 skew = 0.0
+                tag_norm_bot = None
 
             dist = self._camera_distance(now)
 
@@ -954,9 +1014,9 @@ class WindowsMissionRunner:
 
             # Continuously update planned path preview while in TELEOP
             if vis:
-                self._replan_cubic_to_tag(self.tag_dist_m, self.tag_bearing_rad, self.tag_skew_rad, v_curr=self.v_min, log_plan=False)
+                self._replan_cubic_to_tag(self.tag_dist_m, self.tag_bearing_rad, self.tag_skew_rad, v_curr=self.v_min, tag_normal_rad=tag_norm_bot, log_plan=False)
             elif mem_rel is not None:
-                self._replan_cubic_to_tag(mem_rel[0], mem_rel[1], mem_rel[2], v_curr=self.v_min, log_plan=False)
+                self._replan_cubic_to_tag(mem_rel[0], mem_rel[1], mem_rel[2], v_curr=self.v_min, tag_normal_rad=tag_norm_bot, log_plan=False)
 
         elif self.estop_paused:
             vx_cmd, wz_cmd = 0.0, 0.0
@@ -1022,7 +1082,7 @@ class WindowsMissionRunner:
                     self.state_time = now
             elif (vis and abs(bearing) <= 0.22) or (mem_rel is not None and abs(mem_rel[1]) <= 0.16 and in_state_s >= 0.4):
                 with self.lock:
-                    self._replan_cubic_to_tag(dist, bearing, skew, v_curr=self.v_min, log_plan=True)
+                    self._replan_cubic_to_tag(dist, bearing, skew, v_curr=self.v_min, tag_normal_rad=tag_norm_bot, log_plan=True)
                 self.state = "CHASING"
                 self.state_time = now
 
@@ -1059,7 +1119,7 @@ class WindowsMissionRunner:
             else:
                 # CONTINUOUSLY REPLAN flat cubic path at 20 Hz
                 with self.lock:
-                    self._replan_cubic_to_tag(dist, bearing, skew, v_curr=max(self.v_min, self.vx), log_plan=False)
+                    self._replan_cubic_to_tag(dist, bearing, skew, v_curr=max(self.v_min, self.vx), tag_normal_rad=tag_norm_bot, log_plan=False)
 
                 tau_look = min(0.35, 0.20 * self.cubic_T)
                 v_ff, w_ff, _, _, xdot, ydot = evaluate_flatness(
@@ -1282,26 +1342,77 @@ class WindowsMissionRunner:
             sy = 214.0 / float(raw_frame.shape[0])
 
             # Visual guidelines & target alignment zone
-            cv2.line(vis_img, (190, 0), (190, 214), (85, 85, 85), 1)
-            cv2.line(vis_img, (0, 107), (380, 107), (85, 85, 85), 1)
-            cv2.rectangle(vis_img, (145, 62), (235, 151), (70, 135, 70), 1)
-            cv2.putText(vis_img, "20cm TARGET", (140, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (90, 180, 90), 1)
+            cv2.line(vis_img, (190, 0), (190, 214), (65, 65, 65), 1)
+            cv2.line(vis_img, (0, 107), (380, 107), (65, 65, 65), 1)
 
-            gy = int(0.70 * 214)
-            cv2.line(vis_img, (int(0.24 * 380), gy), (int(0.90 * 380), gy), (60, 140, 60), 1)
-            cv2.putText(vis_img, "20cm STANDOFF", (int(0.36 * 380), gy - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (80, 200, 80), 1)
+            # Central 20cm target standoff reticle (where tag will be when 20cm away squarely facing)
+            # At 20cm standoff, a 48mm tag in 380x214 view has apparent size ~56x56 px
+            cv2.rectangle(vis_img, (162, 79), (218, 135), (40, 180, 70), 1)
+            cv2.putText(vis_img, "20cm STANDOFF (180 deg)", (120, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (50, 220, 90), 1)
+
+            # Scaled intrinsic camera matrix for 380x214 display
+            K_disp = np.array([
+                [520.0 * (380.0 / 640.0), 0.0, 190.0],
+                [0.0, 390.0 * (214.0 / 360.0), 107.0],
+                [0.0, 0.0, 1.0]
+            ], dtype=np.float64)
+            dist_disp = np.zeros((4, 1), dtype=np.float64)
 
             for d in all_dets:
-                x, y, w, h = d["bbox"]
-                x1, y1, x2, y2 = int(x * sx), int(y * sy), int((x + w) * sx), int((y + h) * sy)
-                is_tgt = int(d["id"]) == self.target_tag_id
-                col = (0, 255, 0) if is_tgt else (0, 180, 255)
-                cv2.rectangle(vis_img, (x1, y1), (x2, y2), col, 2)
+                tid = int(d["id"])
+                is_tgt = (tid == self.target_tag_id)
+                col_box = (0, 255, 0) if is_tgt else (0, 180, 255)
+                col_pts = (0, 240, 255) if is_tgt else (100, 200, 255)
+
+                # 1. Bounding square/quadrilateral from corners
+                x1, y1 = 4, 16
                 if d.get("corners") is not None:
-                    pts = (d["corners"] * np.array([sx, sy])).astype(np.int32)
-                    cv2.polylines(vis_img, [pts], True, (0, 229, 255), 1)
-                lbl = f"T{d['id']} d={d['dist_m']:.2f}m brg={math.degrees(d['bearing_rad']):+.0f}d"
-                cv2.putText(vis_img, lbl, (max(4, x1), max(14, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.34, col, 1)
+                    pts_disp = (d["corners"] * np.array([sx, sy])).astype(np.int32)
+                    cv2.polylines(vis_img, [pts_disp], True, col_pts, 2)
+                    cv2.circle(vis_img, tuple(pts_disp[0]), 3, (0, 0, 255), -1)
+                    x1 = max(4, int(np.min(pts_disp[:, 0])))
+                    y1 = max(24, int(np.min(pts_disp[:, 1])))
+
+                # 2. Draw 3D normal vector arrow originating from tag center
+                tvec_d = d.get("tvec_cam")
+                n_cam_d = d.get("normal_cam")
+                facing_deg = float(d.get("tag_facing_deg", 0.0))
+
+                if tvec_d is not None and len(tvec_d) == 3 and n_cam_d is not None:
+                    try:
+                        pt_c3d = np.array(tvec_d, dtype=np.float64).reshape(1, 3)
+                        pt_n3d = (pt_c3d.flatten() + 0.075 * np.array(n_cam_d, dtype=np.float64)).reshape(1, 3)
+                        p2d_c, _ = cv2.projectPoints(pt_c3d, np.zeros((3,1)), np.zeros((3,1)), K_disp, dist_disp)
+                        p2d_n, _ = cv2.projectPoints(pt_n3d, np.zeros((3,1)), np.zeros((3,1)), K_disp, dist_disp)
+                        u0, v0 = int(p2d_c[0, 0, 0]), int(p2d_c[0, 0, 1])
+                        u1, v1 = int(p2d_n[0, 0, 0]), int(p2d_n[0, 0, 1])
+                        if 0 <= u0 < 380 and 0 <= v0 < 214 and 0 <= u1 < 380 and 0 <= v1 < 214:
+                            cv2.arrowedLine(vis_img, (u0, v0), (u1, v1), (0, 50, 255), 2, tipLength=0.35)
+                    except Exception:
+                        pass
+
+                # 3. World coordinates and face-to-face bearing alignment
+                b_rad = float(d["bearing_rad"])
+                d_m = float(d["dist_m"])
+                w_dir = wrap_angle(self.odom_yaw + b_rad)
+                wx = self.odom_x + d_m * math.cos(w_dir)
+                wy = self.odom_y + d_m * math.sin(w_dir)
+
+                # Face-to-face alignment error:
+                face_err_deg = abs(facing_deg) + abs(math.degrees(b_rad))
+
+                # Multiline text HUD badge
+                tgt_badge = "[TARGET]" if is_tgt else ""
+                lbl1 = f"Tag {tid} {tgt_badge} | d={d_m:.2f}m"
+                lbl2 = f"Cam:({tvec_d[0]:+.2f},{tvec_d[1]:+.2f},{tvec_d[2]:.2f})m" if tvec_d is not None else f"Brg:{math.degrees(b_rad):+.1f}d"
+                lbl3 = f"W:({wx:+.2f},{wy:+.2f})m Facing:{facing_deg:+.1f}d"
+
+                cv2.putText(vis_img, lbl1, (x1, y1 - 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, col_box, 1)
+                cv2.putText(vis_img, lbl2, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.26, (220, 220, 220), 1)
+                cv2.putText(vis_img, lbl3, (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.26, (180, 240, 255), 1)
+
+                if is_tgt and face_err_deg <= 5.0 and abs(d_m - self.standoff_m) <= 0.035:
+                    cv2.putText(vis_img, "★ FACE-TO-FACE (20cm) ★", (110, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 0), 2)
 
             now = time.monotonic()
             with self.lock:
@@ -1360,6 +1471,8 @@ class WindowsMissionRunner:
                             "x": round(v.get("x", 0.0), 2),
                             "y": round(v.get("y", 0.0), 2),
                             "yaw_deg": round(math.degrees(v["yaw"]), 1),
+                            "normal_world": v.get("normal_world", wrap_angle(v["yaw"] + math.pi)),
+                            "facing_deg": round(math.degrees(v.get("normal_world", wrap_angle(v["yaw"] + math.pi))), 1),
                             "dist_m": round(v["dist_m"], 2),
                             "skew_deg": round(math.degrees(v["skew_rad"]), 1),
                         }
@@ -1457,10 +1570,11 @@ class WindowsMissionRunner:
                     self.target_tag_id = int(cmd["target_tag_id"])
                     mem_rel = self._get_mem_tag_relative(self.target_tag_id)
                     if mem_rel is not None:
-                        self._replan_cubic_to_tag(mem_rel[0], mem_rel[1], mem_rel[2], v_curr=self.v_min, log_plan=False)
+                        self._replan_cubic_to_tag(mem_rel[0], mem_rel[1], mem_rel[2], v_curr=self.v_min, tag_normal_rad=mem_rel[3], log_plan=False)
                     else:
-                        self._replan_cubic_to_tag(1.50, 0.0, 0.0, v_curr=self.v_min, log_plan=False)
-                print(f"[GUI] Switched Target Tag to T{self.target_tag_id} and pre-computed planned path.")
+                        self.planned_path_pts = []
+                        self.trajectory_analysis = {}
+                print(f"[GUI] Switched Target Tag to T{self.target_tag_id}.")
             elif action == "update_params":
                 params = cmd.get("params", {})
                 self._apply_tuning_dict(params, move_arm=True)
