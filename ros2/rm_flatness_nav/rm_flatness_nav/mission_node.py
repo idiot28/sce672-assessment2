@@ -1378,6 +1378,8 @@ class FlatnessMissionNode(Node):
                             "x": round(v.get("x", 0.0), 2),
                             "y": round(v.get("y", 0.0), 2),
                             "yaw_deg": round(math.degrees(v["yaw"]), 1),
+                            "normal_world": v.get("normal_world", wrap_angle(v["yaw"] + math.pi)),
+                            "facing_deg": round(math.degrees(v.get("normal_world", wrap_angle(v["yaw"] + math.pi))), 1),
                             "dist_m": round(v["dist_m"], 2),
                             "skew_deg": round(math.degrees(v["skew_rad"]), 1),
                         }
@@ -1407,30 +1409,77 @@ class FlatnessMissionNode(Node):
 
     def _write_gui_stream(self, raw_frame: np.ndarray, all_dets: list):
         try:
-            vis_img = cv2.resize(raw_frame, (380, 214))
-            sx = 380.0 / float(raw_frame.shape[1])
-            sy = 214.0 / float(raw_frame.shape[0])
+            # Resize directly to 560x315 (exact display dimension of GUI camera widget)
+            vis_img = cv2.resize(raw_frame, (560, 315))
+            sx = 560.0 / float(raw_frame.shape[1])
+            sy = 315.0 / float(raw_frame.shape[0])
 
-            cv2.line(vis_img, (190, 0), (190, 214), (85, 85, 85), 1)
-            cv2.line(vis_img, (0, 107), (380, 107), (85, 85, 85), 1)
-            cv2.rectangle(vis_img, (145, 62), (235, 151), (70, 135, 70), 1)
-            cv2.putText(vis_img, "20cm TARGET", (140, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (90, 180, 90), 1)
+            cv2.line(vis_img, (280, 0), (280, 315), (70, 70, 70), 1)
+            cv2.line(vis_img, (0, 157), (560, 157), (70, 70, 70), 1)
 
-            gy = int(0.70 * 214)
-            cv2.line(vis_img, (int(0.24 * 380), gy), (int(0.90 * 380), gy), (60, 140, 60), 1)
-            cv2.putText(vis_img, "20cm STANDOFF", (int(0.36 * 380), gy - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (80, 200, 80), 1)
+            cv2.rectangle(vis_img, (238, 115), (322, 199), (40, 180, 70), 1)
+            cv2.putText(vis_img, "20cm STANDOFF (180 deg)", (180, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (50, 220, 90), 1)
+
+            K_disp = np.array([
+                [520.0 * (560.0 / 640.0), 0.0, 280.0],
+                [0.0, 390.0 * (315.0 / 360.0), 157.5],
+                [0.0, 0.0, 1.0]
+            ], dtype=np.float64)
+            dist_disp = np.zeros((4, 1), dtype=np.float64)
 
             for d in all_dets:
-                x, y, w, h = d["bbox"]
-                x1, y1, x2, y2 = int(x * sx), int(y * sy), int((x + w) * sx), int((y + h) * sy)
-                is_tgt = int(d["id"]) == self.target_tag_id
-                col = (0, 255, 0) if is_tgt else (0, 180, 255)
-                cv2.rectangle(vis_img, (x1, y1), (x2, y2), col, 2)
+                tid = int(d["id"])
+                is_tgt = (tid == self.target_tag_id)
+                col_box = (0, 255, 0) if is_tgt else (0, 180, 255)
+                col_pts = (0, 240, 255) if is_tgt else (100, 200, 255)
+
+                x1, y1 = 6, 20
                 if d.get("corners") is not None:
-                    pts = (d["corners"] * np.array([sx, sy])).astype(np.int32)
-                    cv2.polylines(vis_img, [pts], True, (0, 229, 255), 1)
-                lbl = f"T{d['id']} d={d['dist_m']:.2f}m brg={math.degrees(d['bearing_rad']):+.0f}d"
-                cv2.putText(vis_img, lbl, (max(4, x1), max(14, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.34, col, 1)
+                    pts_disp = (d["corners"] * np.array([sx, sy])).astype(np.int32)
+                    cv2.polylines(vis_img, [pts_disp], True, col_pts, 2)
+                    cv2.circle(vis_img, tuple(pts_disp[0]), 4, (0, 0, 255), -1)
+                    x1 = max(6, int(np.min(pts_disp[:, 0])))
+                    y1 = max(36, int(np.min(pts_disp[:, 1])))
+
+                tvec_d = d.get("tvec_cam")
+                n_cam_d = d.get("normal_cam")
+                facing_deg = float(d.get("tag_facing_deg", 0.0))
+
+                if tvec_d is not None and len(tvec_d) == 3 and n_cam_d is not None:
+                    try:
+                        pt_c3d = np.array(tvec_d, dtype=np.float64).reshape(1, 3)
+                        pt_n3d = (pt_c3d.flatten() + 0.08 * np.array(n_cam_d, dtype=np.float64)).reshape(1, 3)
+                        p2d_c, _ = cv2.projectPoints(pt_c3d, np.zeros((3,1)), np.zeros((3,1)), K_disp, dist_disp)
+                        p2d_n, _ = cv2.projectPoints(pt_n3d, np.zeros((3,1)), np.zeros((3,1)), K_disp, dist_disp)
+                        u0, v0 = int(p2d_c[0, 0, 0]), int(p2d_c[0, 0, 1])
+                        u1, v1 = int(p2d_n[0, 0, 0]), int(p2d_n[0, 0, 1])
+                        if 0 <= u0 < 560 and 0 <= v0 < 315 and 0 <= u1 < 560 and 0 <= v1 < 315:
+                            cv2.arrowedLine(vis_img, (u0, v0), (u1, v1), (0, 40, 255), 2, tipLength=0.35)
+                    except Exception:
+                        pass
+
+                b_rad = float(d["bearing_rad"])
+                d_m = float(d["dist_m"])
+                w_dir = wrap_angle(self.odom_yaw + b_rad)
+                wx = self.odom_x + d_m * math.cos(w_dir)
+                wy = self.odom_y + d_m * math.sin(w_dir)
+
+                face_err_deg = abs(facing_deg) + abs(math.degrees(b_rad))
+
+                tgt_badge = "[TARGET]" if is_tgt else ""
+                lbl1 = f"Tag {tid} {tgt_badge} | d={d_m:.2f}m"
+                lbl2 = f"Cam: ({tvec_d[0]:+.2f}, {tvec_d[1]:+.2f}, {tvec_d[2]:.2f})m | Brg: {math.degrees(b_rad):+.1f}d" if tvec_d is not None else f"Brg: {math.degrees(b_rad):+.1f}d"
+                lbl3 = f"World: ({wx:+.2f}, {wy:+.2f})m | Facing: {facing_deg:+.1f}d"
+
+                cv2.putText(vis_img, lbl1, (x1, y1 - 22), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 0, 0), 2)
+                cv2.putText(vis_img, lbl1, (x1, y1 - 22), cv2.FONT_HERSHEY_SIMPLEX, 0.40, col_box, 1)
+                cv2.putText(vis_img, lbl2, (x1, y1 - 11), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (0, 0, 0), 2)
+                cv2.putText(vis_img, lbl2, (x1, y1 - 11), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (240, 240, 240), 1)
+                cv2.putText(vis_img, lbl3, (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (0, 0, 0), 2)
+                cv2.putText(vis_img, lbl3, (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (180, 240, 255), 1)
+
+                if is_tgt and face_err_deg <= 5.0 and abs(d_m - self.standoff_m) <= 0.035:
+                    cv2.putText(vis_img, "★ FACE-TO-FACE (20cm) ★", (160, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
             now = time.monotonic()
             with self.lock:
@@ -1489,6 +1538,8 @@ class FlatnessMissionNode(Node):
                             "x": round(v.get("x", 0.0), 2),
                             "y": round(v.get("y", 0.0), 2),
                             "yaw_deg": round(math.degrees(v["yaw"]), 1),
+                            "normal_world": v.get("normal_world", wrap_angle(v["yaw"] + math.pi)),
+                            "facing_deg": round(math.degrees(v.get("normal_world", wrap_angle(v["yaw"] + math.pi))), 1),
                             "dist_m": round(v["dist_m"], 2),
                             "skew_deg": round(math.degrees(v["skew_rad"]), 1),
                         }

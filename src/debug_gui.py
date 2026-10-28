@@ -30,7 +30,7 @@ from tkinter import ttk
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from PIL import Image, ImageTk, ImageDraw
 
-from flatness_math import format_trajectory_report, compute_trajectory_matrices, format_initial_poses_report
+from flatness_math import wrap_angle, format_trajectory_report, compute_trajectory_matrices, format_initial_poses_report
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..")) if os.path.basename(SCRIPT_DIR) == "src" else SCRIPT_DIR
@@ -1159,17 +1159,22 @@ class DebugApp:
             self._send_wasd_from_keys()
 
         # ---------------------------------------------------------------------
-        # 1. Update Live Camera Frame (Zero Latency Direct Stream)
+        # 1. Update Live Camera Frame (Zero Latency Direct Stream with Overlays)
         # ---------------------------------------------------------------------
         got_frame = False
-        if self.runner is not None and getattr(self.runner, "latest_raw_frame", None) is not None:
+        disp_frame = None
+        if self.runner is not None:
+            # Prefer annotated frame with bounding squares, 3D normal vector arrows, and HUD badges
+            disp_frame = getattr(self.runner, "latest_annotated_frame", None)
+            if disp_frame is None:
+                disp_frame = getattr(self.runner, "latest_raw_frame", None)
+
+        if disp_frame is not None:
             try:
-                raw_frame = self.runner.latest_raw_frame
-                # Pure native display: No processing, instant in-memory blit (<2.5ms)
-                rgb = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2RGB)
+                rgb = cv2.cvtColor(disp_frame, cv2.COLOR_BGR2RGB)
                 pil_img = Image.fromarray(rgb)
                 if pil_img.size != (560, 315):
-                    pil_img = pil_img.resize((560, 315), Image.NEAREST)
+                    pil_img = pil_img.resize((560, 315), Image.BILINEAR)
                 self._tk_cam_img = ImageTk.PhotoImage(pil_img)
                 self.cam_label.configure(image=self._tk_cam_img)
                 got_frame = True
@@ -1180,13 +1185,15 @@ class DebugApp:
                     self._fps_val = self._frame_count / (t_now - self._fps_time)
                     self._frame_count = 0
                     self._fps_time = t_now
+                    has_annotated = getattr(self.runner, "latest_annotated_frame", None) is not None
+                    tag_status = "HUD & Squares" if has_annotated else "Native"
                     self.lbl_cam_fps.configure(
-                        text=f"{raw_frame.shape[1]}x{raw_frame.shape[0]} | {self._fps_val:.0f} FPS Native",
+                        text=f"{disp_frame.shape[1]}x{disp_frame.shape[0]} | {self._fps_val:.0f} FPS ({tag_status})",
                         fg="#00e676"
                     )
 
                 if self.show_cv2_window:
-                    cv2.imshow("RoboMaster EP - Pure Native Feed", raw_frame)
+                    cv2.imshow("RoboMaster EP - Live Camera Stream", disp_frame)
                     cv2.waitKey(1)
             except Exception:
                 pass

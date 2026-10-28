@@ -336,6 +336,7 @@ class WindowsMissionRunner:
         self._stop_evt = threading.Event()
         self._new_frame_evt = threading.Event()
         self.latest_raw_frame = None
+        self.latest_annotated_frame = None
 
         self._grabber_thread = threading.Thread(target=self._camera_grabber_loop, daemon=True)
         self._grabber_thread.start()
@@ -711,16 +712,24 @@ class WindowsMissionRunner:
                     self.last_seen_dist = float(self.tag_dist_m)
                     self.last_seen_odom_x = float(self.odom_x)
                     self.last_seen_odom_y = float(self.odom_y)
+
+                    # Immediately generate/update planned path preview upon visual tag detection
+                    if self.state in ("TELEOP", "SEARCHING", "ALIGNING"):
+                        self._replan_cubic_to_tag(
+                            self.tag_dist_m, self.tag_bearing_rad, self.tag_skew_rad,
+                            v_curr=self.v_min, tag_normal_rad=self.tag_normal_bot_rad, log_plan=False
+                        )
                 else:
                     self.tag_visible = False
 
-            # Throttle disk file write to max 10 Hz for external listeners so disk I/O never blocks
-            if (now - last_file_write) >= 0.10:
+            # Update in-memory annotated frame at full vision rate; throttle disk write to 10 Hz
+            write_disk = (now - last_file_write) >= 0.10
+            if write_disk:
                 last_file_write = now
-                try:
-                    self._write_gui_stream(frame_copy, dets)
-                except Exception:
-                    pass
+            try:
+                self._write_gui_stream(frame_copy, dets, write_disk=write_disk)
+            except Exception:
+                pass
 
     # =========================================================================
     # Pure Optical Distance & Spatial Memory Estimator (No ToF Sensor)
@@ -1335,25 +1344,26 @@ class WindowsMissionRunner:
         self.park_phase = "BACKUP" if needs_backup else "TRIM"
         print(f"[STANDOFF REACHED] d={dist:.3f}m, brg={math.degrees(bearing):+.1f}deg, skew={math.degrees(skew):+.1f}deg -> Starting FINE_ALIGN ({self.park_phase}).")
 
-    def _write_gui_stream(self, raw_frame: np.ndarray, all_dets: list):
+    def _write_gui_stream(self, raw_frame: np.ndarray, all_dets: list, write_disk: bool = True):
         try:
-            vis_img = cv2.resize(raw_frame, (380, 214))
-            sx = 380.0 / float(raw_frame.shape[1])
-            sy = 214.0 / float(raw_frame.shape[0])
+            # Resize directly to 560x315 (exact display dimension of GUI camera widget)
+            vis_img = cv2.resize(raw_frame, (560, 315))
+            sx = 560.0 / float(raw_frame.shape[1])
+            sy = 315.0 / float(raw_frame.shape[0])
 
             # Visual guidelines & target alignment zone
-            cv2.line(vis_img, (190, 0), (190, 214), (65, 65, 65), 1)
-            cv2.line(vis_img, (0, 107), (380, 107), (65, 65, 65), 1)
+            cv2.line(vis_img, (280, 0), (280, 315), (70, 70, 70), 1)
+            cv2.line(vis_img, (0, 157), (560, 157), (70, 70, 70), 1)
 
             # Central 20cm target standoff reticle (where tag will be when 20cm away squarely facing)
-            # At 20cm standoff, a 48mm tag in 380x214 view has apparent size ~56x56 px
-            cv2.rectangle(vis_img, (162, 79), (218, 135), (40, 180, 70), 1)
-            cv2.putText(vis_img, "20cm STANDOFF (180 deg)", (120, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (50, 220, 90), 1)
+            # At 20cm standoff, a 48mm tag in 560x315 view has apparent size ~84x84 px
+            cv2.rectangle(vis_img, (238, 115), (322, 199), (40, 180, 70), 1)
+            cv2.putText(vis_img, "20cm STANDOFF (180 deg)", (180, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (50, 220, 90), 1)
 
-            # Scaled intrinsic camera matrix for 380x214 display
+            # Scaled intrinsic camera matrix for 560x315 display
             K_disp = np.array([
-                [520.0 * (380.0 / 640.0), 0.0, 190.0],
-                [0.0, 390.0 * (214.0 / 360.0), 107.0],
+                [520.0 * (560.0 / 640.0), 0.0, 280.0],
+                [0.0, 390.0 * (315.0 / 360.0), 157.5],
                 [0.0, 0.0, 1.0]
             ], dtype=np.float64)
             dist_disp = np.zeros((4, 1), dtype=np.float64)
@@ -1365,13 +1375,13 @@ class WindowsMissionRunner:
                 col_pts = (0, 240, 255) if is_tgt else (100, 200, 255)
 
                 # 1. Bounding square/quadrilateral from corners
-                x1, y1 = 4, 16
+                x1, y1 = 6, 20
                 if d.get("corners") is not None:
                     pts_disp = (d["corners"] * np.array([sx, sy])).astype(np.int32)
                     cv2.polylines(vis_img, [pts_disp], True, col_pts, 2)
-                    cv2.circle(vis_img, tuple(pts_disp[0]), 3, (0, 0, 255), -1)
-                    x1 = max(4, int(np.min(pts_disp[:, 0])))
-                    y1 = max(24, int(np.min(pts_disp[:, 1])))
+                    cv2.circle(vis_img, tuple(pts_disp[0]), 4, (0, 0, 255), -1)
+                    x1 = max(6, int(np.min(pts_disp[:, 0])))
+                    y1 = max(36, int(np.min(pts_disp[:, 1])))
 
                 # 2. Draw 3D normal vector arrow originating from tag center
                 tvec_d = d.get("tvec_cam")
@@ -1381,13 +1391,13 @@ class WindowsMissionRunner:
                 if tvec_d is not None and len(tvec_d) == 3 and n_cam_d is not None:
                     try:
                         pt_c3d = np.array(tvec_d, dtype=np.float64).reshape(1, 3)
-                        pt_n3d = (pt_c3d.flatten() + 0.075 * np.array(n_cam_d, dtype=np.float64)).reshape(1, 3)
+                        pt_n3d = (pt_c3d.flatten() + 0.08 * np.array(n_cam_d, dtype=np.float64)).reshape(1, 3)
                         p2d_c, _ = cv2.projectPoints(pt_c3d, np.zeros((3,1)), np.zeros((3,1)), K_disp, dist_disp)
                         p2d_n, _ = cv2.projectPoints(pt_n3d, np.zeros((3,1)), np.zeros((3,1)), K_disp, dist_disp)
                         u0, v0 = int(p2d_c[0, 0, 0]), int(p2d_c[0, 0, 1])
                         u1, v1 = int(p2d_n[0, 0, 0]), int(p2d_n[0, 0, 1])
-                        if 0 <= u0 < 380 and 0 <= v0 < 214 and 0 <= u1 < 380 and 0 <= v1 < 214:
-                            cv2.arrowedLine(vis_img, (u0, v0), (u1, v1), (0, 50, 255), 2, tipLength=0.35)
+                        if 0 <= u0 < 560 and 0 <= v0 < 315 and 0 <= u1 < 560 and 0 <= v1 < 315:
+                            cv2.arrowedLine(vis_img, (u0, v0), (u1, v1), (0, 40, 255), 2, tipLength=0.35)
                     except Exception:
                         pass
 
@@ -1398,116 +1408,126 @@ class WindowsMissionRunner:
                 wx = self.odom_x + d_m * math.cos(w_dir)
                 wy = self.odom_y + d_m * math.sin(w_dir)
 
-                # Face-to-face alignment error:
+                # Face-to-face alignment error
                 face_err_deg = abs(facing_deg) + abs(math.degrees(b_rad))
 
                 # Multiline text HUD badge
                 tgt_badge = "[TARGET]" if is_tgt else ""
                 lbl1 = f"Tag {tid} {tgt_badge} | d={d_m:.2f}m"
-                lbl2 = f"Cam:({tvec_d[0]:+.2f},{tvec_d[1]:+.2f},{tvec_d[2]:.2f})m" if tvec_d is not None else f"Brg:{math.degrees(b_rad):+.1f}d"
-                lbl3 = f"W:({wx:+.2f},{wy:+.2f})m Facing:{facing_deg:+.1f}d"
+                lbl2 = f"Cam: ({tvec_d[0]:+.2f}, {tvec_d[1]:+.2f}, {tvec_d[2]:.2f})m | Brg: {math.degrees(b_rad):+.1f}d" if tvec_d is not None else f"Brg: {math.degrees(b_rad):+.1f}d"
+                lbl3 = f"World: ({wx:+.2f}, {wy:+.2f})m | Facing: {facing_deg:+.1f}d"
 
-                cv2.putText(vis_img, lbl1, (x1, y1 - 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, col_box, 1)
-                cv2.putText(vis_img, lbl2, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.26, (220, 220, 220), 1)
-                cv2.putText(vis_img, lbl3, (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.26, (180, 240, 255), 1)
+                cv2.putText(vis_img, lbl1, (x1, y1 - 22), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 0, 0), 2)
+                cv2.putText(vis_img, lbl1, (x1, y1 - 22), cv2.FONT_HERSHEY_SIMPLEX, 0.40, col_box, 1)
+                cv2.putText(vis_img, lbl2, (x1, y1 - 11), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (0, 0, 0), 2)
+                cv2.putText(vis_img, lbl2, (x1, y1 - 11), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (240, 240, 240), 1)
+                cv2.putText(vis_img, lbl3, (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (0, 0, 0), 2)
+                cv2.putText(vis_img, lbl3, (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (180, 240, 255), 1)
 
                 if is_tgt and face_err_deg <= 5.0 and abs(d_m - self.standoff_m) <= 0.035:
-                    cv2.putText(vis_img, "★ FACE-TO-FACE (20cm) ★", (110, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 0), 2)
+                    cv2.putText(vis_img, "★ FACE-TO-FACE (20cm) ★", (160, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
-            now = time.monotonic()
+            # Store fresh annotated frame in RAM for zero-latency direct blitting by debug_gui
             with self.lock:
-                cam_d = self._camera_distance(now)
-                wasd_active = now < self.manual_until
-                if self.estop_paused:
-                    gui_state = "PAUSED (E-STOP)"
-                elif wasd_active:
-                    gui_state = "WASD TELEOP"
-                elif self.state == "FINE_ALIGN":
-                    gui_state = f"FINE_ALIGN ({self.park_phase})"
-                else:
-                    gui_state = self.state
+                self.latest_annotated_frame = vis_img
 
-                payload = {
-                    "timestamp": round(now - self.start_time, 2),
-                    "mode": "WINDOWS NATIVE (" + self.conn_type.upper() + ")" if self.hw_connected else "WINDOWS SIMULATION",
-                    "state": gui_state,
-                    "target_tag_id": self.target_tag_id,
-                    "sweep_deg": round(min(360.0, math.degrees(self.sweep_rad)), 1),
-                    "fused_dist_m": round(float(cam_d), 3),
-                    "standoff_goal_m": self.standoff_m,
-                    "tag_visible": bool(self.tag_visible),
-                    "cam_dist_m": round(float(self.tag_dist_m), 3),
-                    "bearing_deg": round(math.degrees(self.tag_bearing_rad), 2),
-                    "skew_deg": round(math.degrees(self.tag_skew_rad), 2),
-                    "tof_dist_m": round(float(cam_d), 3),
-                    "tof_active_ch": 0,
-                    "tof_channels_mm": [0, 0, 0, 0],
-                    "tof_status": ["CAMERA_ONLY", "CAMERA_ONLY", "CAMERA_ONLY", "CAMERA_ONLY"],
-                    "vx": round(float(self.vx), 3),
-                    "vy": 0.0,
-                    "wz_rad": round(float(self.wz), 3),
-                    "wz_deg": round(math.degrees(self.wz), 1),
-                    "odom": [round(self.odom_x, 3), round(self.odom_y, 3), round(math.degrees(self.odom_yaw), 1)],
-                    "voltages": [round(float(v), 3) for v in self.voltages],
-                    "wheel_rads": [round(float(w), 2) for w in self.w_prev],
-                    "tuning": {
-                        "sweep_wz_rad": round(self.sweep_wz_rad, 2),
-                        "align_wz_max": round(self.align_wz_max, 2),
-                        "v_max_mps": round(self.v_max, 2),
-                        "v_min_mps": round(self.v_min, 2),
-                        "chase_wz_max": round(self.chase_wz_max, 2),
-                        "turn_radius_m": round(self.turn_radius_m, 2),
-                        "standoff_m": round(self.standoff_m, 2),
-                        "arm_x_mm": self.arm_x_mm,
-                        "arm_y_mm": self.arm_y_mm,
-                        "kp_bearing": round(self.kp_bearing, 2),
-                        "kp_skew": round(self.kp_skew, 2),
-                        "tag_size_mm": self.tag_size_mm,
-                        "tof_blocked_thresh_mm": 220,
-                        "tof_mode": "CAMERA_ONLY",
-                    },
-                    "tag_memory": {
-                        str(k): {
-                            "x": round(v.get("x", 0.0), 2),
-                            "y": round(v.get("y", 0.0), 2),
-                            "yaw_deg": round(math.degrees(v["yaw"]), 1),
-                            "normal_world": v.get("normal_world", wrap_angle(v["yaw"] + math.pi)),
-                            "facing_deg": round(math.degrees(v.get("normal_world", wrap_angle(v["yaw"] + math.pi))), 1),
-                            "dist_m": round(v["dist_m"], 2),
-                            "skew_deg": round(math.degrees(v["skew_rad"]), 1),
-                        }
-                        for k, v in self.tag_memory.items()
-                    },
-                    "planned_path": self.planned_path_pts,
-                    "odom_trail": list(self.odom_trail),
-                    "history_trails": [list(t) for t in self.history_trails],
-                    "table1": self.table1_rows[-18:],
-                    "trajectory_analysis": self.trajectory_analysis,
-                    "initial_poses_before_chase": self.initial_poses_before_chase,
-                }
+            if write_disk:
+                now = time.monotonic()
+                with self.lock:
+                    cam_d = self._camera_distance(now)
+                    wasd_active = now < self.manual_until
+                    if self.estop_paused:
+                        gui_state = "PAUSED (E-STOP)"
+                    elif wasd_active:
+                        gui_state = "WASD TELEOP"
+                    elif self.state == "FINE_ALIGN":
+                        gui_state = f"FINE_ALIGN ({self.park_phase})"
+                    else:
+                        gui_state = self.state
 
-            img_tmp = os.path.join(self.output_dir, "live_camera_tmp.jpg")
-            img_out = os.path.join(self.output_dir, "live_camera.jpg")
-            cv2.imwrite(img_tmp, vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
-            try:
-                os.replace(img_tmp, img_out)
-            except Exception:
+                    payload = {
+                        "timestamp": round(now - self.start_time, 2),
+                        "mode": "WINDOWS NATIVE (" + self.conn_type.upper() + ")" if self.hw_connected else "WINDOWS SIMULATION",
+                        "state": gui_state,
+                        "target_tag_id": self.target_tag_id,
+                        "sweep_deg": round(min(360.0, math.degrees(self.sweep_rad)), 1),
+                        "fused_dist_m": round(float(cam_d), 3),
+                        "standoff_goal_m": self.standoff_m,
+                        "tag_visible": bool(self.tag_visible),
+                        "cam_dist_m": round(float(self.tag_dist_m), 3),
+                        "bearing_deg": round(math.degrees(self.tag_bearing_rad), 2),
+                        "skew_deg": round(math.degrees(self.tag_skew_rad), 2),
+                        "tof_dist_m": round(float(cam_d), 3),
+                        "tof_active_ch": 0,
+                        "tof_channels_mm": [0, 0, 0, 0],
+                        "tof_status": ["CAMERA_ONLY", "CAMERA_ONLY", "CAMERA_ONLY", "CAMERA_ONLY"],
+                        "vx": round(float(self.vx), 3),
+                        "vy": 0.0,
+                        "wz_rad": round(float(self.wz), 3),
+                        "wz_deg": round(math.degrees(self.wz), 1),
+                        "odom": [round(self.odom_x, 3), round(self.odom_y, 3), round(math.degrees(self.odom_yaw), 1)],
+                        "voltages": [round(float(v), 3) for v in self.voltages],
+                        "wheel_rads": [round(float(w), 2) for w in self.w_prev],
+                        "tuning": {
+                            "sweep_wz_rad": round(self.sweep_wz_rad, 2),
+                            "align_wz_max": round(self.align_wz_max, 2),
+                            "v_max_mps": round(self.v_max, 2),
+                            "v_min_mps": round(self.v_min, 2),
+                            "chase_wz_max": round(self.chase_wz_max, 2),
+                            "turn_radius_m": round(self.turn_radius_m, 2),
+                            "standoff_m": round(self.standoff_m, 2),
+                            "arm_x_mm": self.arm_x_mm,
+                            "arm_y_mm": self.arm_y_mm,
+                            "kp_bearing": round(self.kp_bearing, 2),
+                            "kp_skew": round(self.kp_skew, 2),
+                            "tag_size_mm": self.tag_size_mm,
+                            "tof_blocked_thresh_mm": 220,
+                            "tof_mode": "CAMERA_ONLY",
+                        },
+                        "tag_memory": {
+                            str(k): {
+                                "x": round(v.get("x", 0.0), 2),
+                                "y": round(v.get("y", 0.0), 2),
+                                "yaw_deg": round(math.degrees(v["yaw"]), 1),
+                                "normal_world": v.get("normal_world", wrap_angle(v["yaw"] + math.pi)),
+                                "facing_deg": round(math.degrees(v.get("normal_world", wrap_angle(v["yaw"] + math.pi))), 1),
+                                "dist_m": round(v["dist_m"], 2),
+                                "skew_deg": round(math.degrees(v["skew_rad"]), 1),
+                            }
+                            for k, v in self.tag_memory.items()
+                        },
+                        "planned_path": self.planned_path_pts,
+                        "odom_trail": list(self.odom_trail),
+                        "history_trails": [list(t) for t in self.history_trails],
+                        "table1": self.table1_rows[-18:],
+                        "trajectory_analysis": self.trajectory_analysis,
+                        "initial_poses_before_chase": self.initial_poses_before_chase,
+                    }
+
+                img_tmp = os.path.join(self.output_dir, "live_camera_tmp.jpg")
+                img_out = os.path.join(self.output_dir, "live_camera.jpg")
+                cv2.imwrite(img_tmp, vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
                 try:
-                    import shutil
-                    shutil.copyfile(img_tmp, img_out)
+                    os.replace(img_tmp, img_out)
                 except Exception:
-                    pass
+                    try:
+                        import shutil
+                        shutil.copyfile(img_tmp, img_out)
+                    except Exception:
+                        pass
 
-            json_tmp = os.path.join(self.output_dir, "live_telemetry_tmp.json")
-            json_out = os.path.join(self.output_dir, "live_telemetry.json")
-            with open(json_tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f)
-            try:
-                os.replace(json_tmp, json_out)
-            except Exception:
+                json_tmp = os.path.join(self.output_dir, "live_telemetry_tmp.json")
+                json_out = os.path.join(self.output_dir, "live_telemetry.json")
+                with open(json_tmp, "w", encoding="utf-8") as f:
+                    json.dump(payload, f)
                 try:
-                    import shutil
-                    shutil.copyfile(json_tmp, json_out)
+                    os.replace(json_tmp, json_out)
+                except Exception:
+                    try:
+                        import shutil
+                        shutil.copyfile(json_tmp, json_out)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
         except Exception:
@@ -1714,6 +1734,8 @@ class WindowsMissionRunner:
                         "x": round(v.get("x", 0.0), 2),
                         "y": round(v.get("y", 0.0), 2),
                         "yaw_deg": round(math.degrees(v["yaw"]), 1),
+                        "normal_world": v.get("normal_world", wrap_angle(v["yaw"] + math.pi)),
+                        "facing_deg": round(math.degrees(v.get("normal_world", wrap_angle(v["yaw"] + math.pi))), 1),
                         "dist_m": round(v["dist_m"], 2),
                         "skew_deg": round(math.degrees(v["skew_rad"]), 1),
                     }
