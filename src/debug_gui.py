@@ -24,6 +24,7 @@ import math
 import time
 import threading
 import cv2
+import numpy as np
 import tkinter as tk
 from tkinter import ttk
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -128,6 +129,8 @@ class DebugApp:
         self._was_wasd_moving = False
         self.wasd_btns = {}
         self._last_trajectory_analysis = {}
+        self.current_trail = []
+        self.history_trails = []
 
         self.current_state = "TELEOP" if self.runner else "WAITING"
         self.show_cv2_window = False
@@ -245,10 +248,18 @@ class DebugApp:
 
         map_card = tk.Frame(col1, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=4, pady=4)
         map_card.pack(fill=tk.BOTH, expand=True)
+        map_hdr = tk.Frame(map_card, bg="#151c28")
+        map_hdr.pack(fill=tk.X, pady=(0, 2))
         tk.Label(
-            map_card, text="360° TAG MEMORY RADAR  &  2D FLAT CUBIC MAP",
+            map_hdr, text="360° RADAR & 2D FLAT CUBIC MAP",
             fg="#94a3b8", bg="#151c28", font=("Segoe UI", 7, "bold")
-        ).pack(anchor="w", pady=(0, 2))
+        ).pack(side=tk.LEFT)
+        self.btn_save_path = tk.Button(
+            map_hdr, text="💾 Save Path Plot", bg="#0284c7", fg="#ffffff",
+            activebackground="#0369a1", font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=6, pady=0,
+            command=self._save_path_plot
+        )
+        self.btn_save_path.pack(side=tk.RIGHT)
         self.map_canvas = tk.Canvas(map_card, width=380, height=180, bg="#0f1520", highlightthickness=0)
         self.map_canvas.pack(fill=tk.BOTH, expand=True)
 
@@ -782,21 +793,74 @@ class DebugApp:
             c.create_oval(tx - 4, ty - 4, tx + 4, ty + 4, fill=col, outline="#ffffff")
             c.create_text(tx + 12, ty, text=f"T{tid}", fill=col, font=("Consolas", 7, "bold"))
 
-        # Right half: 2D Flat Cubic Trajectory & Odometry Trail Plot
+        # Right half: 2D Flat Cubic Trajectory & Persistent Odometry Trail Plot
         px0, py0, pw, ph = 160, 16, w - 170, h - 24
         c.create_rectangle(px0, py0, px0 + pw, py0 + ph, fill="#131b2e", outline="#334155")
-        c.create_text(px0 + pw // 2, py0 - 7, text="Flat Cubic Path z(t) (Cyan) vs Odom (Green)", fill="#00e5ff", font=("Segoe UI", 7, "bold"))
+        c.create_text(px0 + pw // 2, py0 - 7, text="2D Map: Flat Cubic z(t) (Cyan) vs Followed Path (Green)", fill="#00e5ff", font=("Segoe UI", 7, "bold"))
 
-        def to_canvas(wx, wy):
-            u = px0 + 20 + ((wx + 0.2) / 1.8) * (pw - 30)
-            v = py0 + ph // 2 - (wy / 1.4) * (ph - 16)
-            return u, v
-
-        ox0, oy0 = to_canvas(0.0, 0.0)
-        c.create_line(px0 + 4, oy0, px0 + pw - 4, oy0, fill="#1e293b")
-        c.create_line(ox0, py0 + 4, ox0, py0 + ph - 4, fill="#1e293b")
+        # Gather points for dynamic bounding box calculation (never clip points!)
+        pts_x = [0.0, 1.50]
+        pts_y = [0.0, 0.0]
+        pts_x.append(float(odom[0]))
+        pts_y.append(float(odom[1]))
 
         path_pts = d.get("planned_path", [])
+        for pt in path_pts:
+            pts_x.append(pt[0])
+            pts_y.append(pt[1])
+
+        trail = d.get("odom_trail", [])
+        if trail:
+            self.current_trail = trail
+            for pt in trail:
+                pts_x.append(pt[0])
+                pts_y.append(pt[1])
+
+        hist = d.get("history_trails", [])
+        if hist:
+            self.history_trails = hist
+            for htrail in hist:
+                for pt in htrail:
+                    pts_x.append(pt[0])
+                    pts_y.append(pt[1])
+
+        min_x = min(min(pts_x) - 0.20, -0.20)
+        max_x = max(max(pts_x) + 0.25, 1.75)
+        span_x = max(max_x - min_x, 1.5)
+
+        min_y = min(min(pts_y) - 0.25, -0.55)
+        max_y = max(max(pts_y) + 0.25, 0.55)
+        span_y = max(max_y - min_y, 0.90)
+
+        def to_canvas(wx, wy):
+            u = px0 + 14 + ((wx - min_x) / span_x) * (pw - 28)
+            v = py0 + ph - 14 - ((wy - min_y) / span_y) * (ph - 28)
+            return u, v
+
+        # Draw grid lines & axes
+        ox0, oy0 = to_canvas(0.0, 0.0)
+        c.create_line(px0 + 4, oy0, px0 + pw - 4, oy0, fill="#1e293b", dash=(2, 2))
+        c.create_line(ox0, py0 + 4, ox0, py0 + ph - 4, fill="#1e293b", dash=(2, 2))
+
+        # Draw Tag T3 (1.50m) and Standoff (1.30m)
+        tag_x, tag_y = to_canvas(1.50, 0.0)
+        c.create_rectangle(tag_x - 5, tag_y - 8, tag_x + 5, tag_y + 8, fill="#ef4444", outline="#ffffff")
+        c.create_text(tag_x, tag_y - 13, text=f"Tag {tgt_id} (1.5m)", fill="#ef4444", font=("Segoe UI", 6, "bold"))
+
+        goal_x, goal_y = to_canvas(1.30, 0.0)
+        c.create_line(goal_x, goal_y - 10, goal_x, goal_y + 10, fill="#10b981", width=2, dash=(2, 2))
+        c.create_text(goal_x, goal_y + 13, text="Goal (20cm)", fill="#10b981", font=("Segoe UI", 6))
+
+        # 1. Draw Past History Trails (subtle dark green, persistent)
+        for htrail in self.history_trails:
+            if len(htrail) >= 2:
+                h_coords = []
+                for pt in htrail:
+                    u, v = to_canvas(pt[0], pt[1])
+                    h_coords.extend([u, v])
+                c.create_line(*h_coords, fill="#1e4a38", width=1.5, dash=(3, 2))
+
+        # 2. Draw Planned Flat Cubic Path z(t) (bright cyan, dashed)
         if len(path_pts) >= 2:
             flat_coords = []
             for pt in path_pts:
@@ -804,16 +868,107 @@ class DebugApp:
                 flat_coords.extend([u, v])
             c.create_line(*flat_coords, fill="#00e5ff", width=2, dash=(3, 2))
 
-        trail = d.get("odom_trail", [])
-        if len(trail) >= 2:
+        # 3. Draw Active Followed Path (vibrant neon green, solid, persistent)
+        active_trail = self.current_trail if len(self.current_trail) >= 2 else trail
+        if len(active_trail) >= 2:
             t_coords = []
-            for pt in trail:
+            for pt in active_trail:
                 u, v = to_canvas(pt[0], pt[1])
                 t_coords.extend([u, v])
-            c.create_line(*t_coords, fill="#00e676", width=2)
+            c.create_line(*t_coords, fill="#00e676", width=2.5)
 
+        # 4. Draw Start Pose (0, 0)
+        c.create_oval(ox0 - 3, oy0 - 3, ox0 + 3, oy0 + 3, fill="#38bdf8", outline="#ffffff")
+
+        # 5. Draw Robot Current Pose
         rx, ry = to_canvas(float(odom[0]), float(odom[1]))
-        c.create_oval(rx - 4, ry - 4, rx + 4, ry + 4, fill="#00e676", outline="#ffffff")
+        r_heading_x = rx + 10 * math.cos(-yaw_rad)
+        r_heading_y = ry + 10 * math.sin(-yaw_rad)
+        c.create_oval(rx - 5, ry - 5, rx + 5, ry + 5, fill="#00e676", outline="#ffffff", width=1.5)
+        c.create_line(rx, ry, r_heading_x, r_heading_y, fill="#ffffff", width=2, arrow=tk.LAST)
+
+    def _save_path_plot(self):
+        """Generates a publication-quality 2D path map of the followed trajectory and saves it."""
+        try:
+            import datetime
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+
+            meta = self._last_trajectory_analysis or compute_trajectory_matrices(1.50, 0.0, 0.0)
+            alpha_x = np.array(meta.get("coefficients_alpha_x", [0.0, 0.06, 0.11, -0.01]))
+            alpha_y = np.array(meta.get("coefficients_alpha_y", [0.0, 0.0, 0.0, 0.0]))
+            T_plan = float(meta.get("T_s", 3.5))
+            d0 = float(meta.get("goal_pose", {}).get("d0_m", 1.50))
+            standoff = float(meta.get("goal_pose", {}).get("standoff_m", 0.20))
+            xf = float(meta.get("goal_pose", {}).get("xf_m", d0 - standoff))
+
+            t_eval = np.linspace(0.0, T_plan, 200)
+            x_plan = alpha_x[0] + alpha_x[1] * t_eval + alpha_x[2] * (t_eval**2) + alpha_x[3] * (t_eval**3)
+            y_plan = alpha_y[0] + alpha_y[1] * t_eval + alpha_y[2] * (t_eval**2) + alpha_y[3] * (t_eval**3)
+
+            trail = self.current_trail
+            if not trail and self.runner:
+                trail = getattr(self.runner, "odom_trail", [])
+
+            fig, ax = plt.subplots(figsize=(8.5, 4.2))
+
+            ax.axvline(d0, color='darkred', linestyle='--', lw=1.5, alpha=0.7, label=f'Target Tag Position (x = {d0:.2f} m)')
+            ax.axvspan(xf, d0, color='red', alpha=0.08, label=f'{int(standoff*100)} cm Standoff Safety Buffer')
+            ax.plot(d0, 0.0, 's', color='darkred', markersize=9, markeredgecolor='black', label='Target Tag Center')
+            ax.plot(xf, 0.0, 'X', color='darkgreen', markersize=9, markeredgecolor='black', label=f'Standoff Goal (x = {xf:.2f} m)')
+
+            ax.plot(x_plan, y_plan, color='#1565c0', lw=2.5, linestyle='-', label=r'Planned Cubic Flat Path $\mathbf{z}(t)$')
+
+            if trail and len(trail) >= 2:
+                tx = [p[0] for p in trail]
+                ty = [p[1] for p in trail]
+                ax.plot(tx, ty, color='#2e7d32', lw=2.2, linestyle='--', marker='o', markevery=max(1, len(tx)//12), markersize=4.5, label='Actual Followed Path (Hardware)')
+
+            for idx, htrail in enumerate(self.history_trails):
+                if len(htrail) >= 2:
+                    hx = [p[0] for p in htrail]
+                    hy = [p[1] for p in htrail]
+                    lbl = 'Previous Run Trail' if idx == 0 else None
+                    ax.plot(hx, hy, color='#78909c', lw=1.2, linestyle=':', alpha=0.7, label=lbl)
+
+            ax.plot(0.0, 0.0, 'o', color='black', markersize=8, label='Start Pose $(0, 0)$')
+
+            poly_box = (
+                f"Differential Flatness Cubic Model:\n"
+                f"x(t) = {alpha_x[0]:.2f} + {alpha_x[1]:.2f}t + {alpha_x[2]:+.3f}t² + {alpha_x[3]:+.4f}t³\n"
+                f"T = {T_plan:.2f} s | Standoff = {standoff:.2f} m"
+            )
+            ax.text(
+                0.03, 0.95, poly_box, transform=ax.transAxes, fontsize=8.2, verticalalignment='top',
+                family='monospace', bbox=dict(boxstyle='round,pad=0.5', facecolor='#e8f4fd', edgecolor='#0284c7', alpha=0.92)
+            )
+
+            ax.set_xlabel('Arena Longitudinal Position $X$ [m]')
+            ax.set_ylabel('Arena Lateral Position $Y$ [m]')
+            ax.set_title('2D Path Map: Planned Differential Flatness vs. Actual Followed Path', pad=8)
+            ax.set_xlim(-0.15, d0 + 0.25)
+            ax.set_ylim(-0.40, 0.40)
+            ax.grid(True)
+            ax.legend(loc='lower left', framealpha=0.92, ncol=2)
+            plt.tight_layout()
+
+            os.makedirs(os.path.join(BASE_DIR, "runs"), exist_ok=True)
+            tstamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            save_path = os.path.join(BASE_DIR, "runs", f"path_2d_saved_{tstamp}.png")
+            plt.savefig(save_path, dpi=300)
+            plt.savefig(os.path.join(BASE_DIR, "runs", "latest_path_2d.png"), dpi=300)
+            rep_path = os.path.join(BASE_DIR, "report", "fig_path_2d_planned_vs_actual.png")
+            if os.path.exists(os.path.dirname(rep_path)):
+                plt.savefig(rep_path, dpi=300)
+            plt.close()
+
+            print(f"[+] Saved 2D Path Map plot to: {save_path}")
+            if hasattr(self, 'btn_save_path'):
+                self.btn_save_path.configure(text="✔ Saved!", bg="#059669")
+                self.root.after(2000, lambda: self.btn_save_path.configure(text="💾 Save Path Plot", bg="#0284c7"))
+        except Exception as e:
+            print(f"[!] Error saving path plot: {e}")
 
     def _update_loop(self):
         if self.pressed_keys:

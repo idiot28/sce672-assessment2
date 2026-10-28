@@ -259,11 +259,15 @@ class FlatnessMissionNode(Node):
 
         self._init_hardware_or_sim()
 
-        # Start dedicated camera grab thread (with 10 ms sleep per Problem 1 Hint)
-        # and dedicated 20 Hz chassis actuator thread (decoupled from vision & disk I/O)
+        # Decoupled Camera Grabber & Vision Worker Threads for Zero Latency
         self._stop_evt = threading.Event()
-        self._cam_thread = threading.Thread(target=self._camera_loop, daemon=True)
-        self._cam_thread.start()
+        self._new_frame_evt = threading.Event()
+        self.latest_raw_frame = None
+
+        self._grabber_thread = threading.Thread(target=self._camera_grabber_loop, daemon=True)
+        self._grabber_thread.start()
+        self._vision_thread = threading.Thread(target=self._vision_worker_loop, daemon=True)
+        self._vision_thread.start()
         self._act_thread = threading.Thread(target=self._chassis_actuator_loop, daemon=True)
         self._act_thread.start()
 
@@ -370,7 +374,13 @@ class FlatnessMissionNode(Node):
                 except Exception as e:
                     self.get_logger().warn(f"DDS subscription warning: {e}")
 
-                self.ep_robot.camera.start_video_stream(display=False, resolution="360p")
+                try:
+                    self.ep_robot.camera._stream_sdk(1, "360p")
+                    self.ep_robot.camera._video_stream(1, "360p")
+                    self.ep_robot.camera._video_enable = True
+                    self.get_logger().info("[CAMERA] Hardware stream protocol enabled (360p).")
+                except Exception:
+                    self.ep_robot.camera.start_video_stream(display=False, resolution="360p")
                 return
             except Exception as e:
                 self.get_logger().warn(f"Hardware unavailable ({e}) -> switching to WSL Arena Simulation.")
@@ -469,74 +479,136 @@ class FlatnessMissionNode(Node):
             time.sleep(0.050)
 
     # =========================================================================
-    # Problem 1: Ultra-Low Latency 30 FPS Camera Thread
+    # Problem 1: Ultra-Low Latency Zero-Processing Camera Grabber Thread
     # =========================================================================
-    def _camera_loop(self):
+    def _camera_grabber_loop(self):
+        """
+        Pulls raw frames from hardware at full 30 FPS with zero lag using direct OpenCV FFmpeg capture.
+        Writes live_camera.jpg directly for immediate Windows GUI display.
+        """
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0|max_delay;0"
+        target_ip = "192.168.42.2" if self.conn_type == "rndis" else "192.168.2.1"
+        stream_url = f"tcp://{target_ip}:40921"
+        cap = None
+
         while not self._stop_evt.is_set():
             frame = None
             if self.hw_connected and self.ep_robot is not None:
-                try:
-                    frame = self.ep_robot.camera.read_cv2_image(strategy="newest", timeout=0.08)
-                except Exception:
-                    frame = None
+                if cap is None or not cap.isOpened():
+                    try:
+                        cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
+                        if cap.isOpened():
+                            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    except Exception:
+                        pass
+                if cap is not None and cap.isOpened():
+                    try:
+                        ret, frame = cap.read()
+                        if not ret:
+                            frame = None
+                    except Exception:
+                        frame = None
+                if frame is None:
+                    try:
+                        frame = self.ep_robot.camera.read_cv2_image(strategy="newest", timeout=0.06)
+                    except Exception:
+                        frame = None
             elif self.sim is not None:
-                time.sleep(0.025)
+                time.sleep(0.030)
                 frame = self.sim.render_frame()
 
             if frame is not None:
-                now = time.monotonic()
-                dets = self.detector.detect_all(frame, default_id=self.target_tag_id)
-                target_det = None
-
                 with self.lock:
-                    tof_ok = self._is_tof_valid(now)
-                    for d in dets:
-                        tid = int(d["id"])
-                        b_rad = float(d["bearing_rad"])
-                        s_rad = float(d["skew_rad"])
-                        # Use ToF sensor distance when pointing near the tag; never let camera underestimate distance
-                        if tof_ok and abs(b_rad) < 0.35 and 0.12 <= self.tof.dist_m <= 2.50:
-                            d_m = float(self.tof.dist_m)
-                        else:
-                            d_m = max(0.12, float(d["dist_m"]))
-                        world_dir = wrap_angle(self.odom_yaw + b_rad)
-                        tx = self.odom_x + d_m * math.cos(world_dir)
-                        ty = self.odom_y + d_m * math.sin(world_dir)
+                    self.latest_raw_frame = frame
+                self._new_frame_evt.set()
 
-                        if tid not in self.tag_memory:
-                            self.tag_memory[tid] = {
-                                "x": tx,
-                                "y": ty,
-                                "yaw": world_dir,
-                                "dist_m": d_m,
-                                "skew_rad": s_rad,
-                            }
-                        else:
-                            m = self.tag_memory[tid]
-                            m["x"] = 0.60 * tx + 0.40 * m["x"]
-                            m["y"] = 0.60 * ty + 0.40 * m["y"]
-                            m["yaw"] = math.atan2(m["y"] - self.odom_y, m["x"] - self.odom_x)
-                            m["dist_m"] = math.hypot(m["x"] - self.odom_x, m["y"] - self.odom_y)
-                            m["skew_rad"] = 0.55 * s_rad + 0.45 * m["skew_rad"]
+                # Write live_camera.jpg directly for GUI with zero processing delay
+                try:
+                    vis_img = cv2.resize(frame, (380, 214))
+                    img_out = os.path.join(self.output_dir, "live_camera.jpg")
+                    cv2.imwrite(img_out, vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                except Exception:
+                    pass
+            else:
+                time.sleep(0.004)
 
-                        if tid == self.target_tag_id:
-                            target_det = d
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
 
-                    if target_det is not None:
-                        self.tag_visible = True
-                        raw_d = float(target_det["dist_m"])
-                        alpha_d = 0.75 if raw_d < self.tag_dist_m else 0.55
-                        self.tag_dist_m = alpha_d * raw_d + (1.0 - alpha_d) * self.tag_dist_m
-                        self.tag_bearing_rad = 0.70 * float(target_det["bearing_rad"]) + 0.30 * self.tag_bearing_rad
-                        self.tag_skew_rad = 0.65 * float(target_det["skew_rad"]) + 0.35 * self.tag_skew_rad
-                        self.last_seen_time = now
-                        self.last_seen_dist = float(self.tag_dist_m)
-                        self.last_seen_odom_x = float(self.odom_x)
-                        self.last_seen_odom_y = float(self.odom_y)
+    def _vision_worker_loop(self):
+        """
+        Runs AprilTag detection in a background worker on frame copies.
+        Completely decoupled from camera streaming so video never lags or drops FPS.
+        """
+        while not self._stop_evt.is_set():
+            if not self._new_frame_evt.wait(timeout=0.10):
+                continue
+            self._new_frame_evt.clear()
+
+            with self.lock:
+                if self.latest_raw_frame is None:
+                    continue
+                frame_copy = self.latest_raw_frame.copy()
+
+            now = time.monotonic()
+            dets = self.detector.detect_all(frame_copy, default_id=self.target_tag_id)
+            target_det = None
+
+            with self.lock:
+                tof_ok = self._is_tof_valid(now)
+                for d in dets:
+                    tid = int(d["id"])
+                    b_rad = float(d["bearing_rad"])
+                    s_rad = float(d["skew_rad"])
+                    if tof_ok and abs(b_rad) < 0.35 and 0.12 <= self.tof.dist_m <= 2.50:
+                        d_m = float(self.tof.dist_m)
                     else:
-                        self.tag_visible = False
+                        d_m = max(0.12, float(d["dist_m"]))
+                    world_dir = wrap_angle(self.odom_yaw + b_rad)
+                    tx = self.odom_x + d_m * math.cos(world_dir)
+                    ty = self.odom_y + d_m * math.sin(world_dir)
 
-                self._write_gui_stream(frame, dets)
+                    if tid not in self.tag_memory:
+                        self.tag_memory[tid] = {
+                            "x": tx,
+                            "y": ty,
+                            "yaw": world_dir,
+                            "dist_m": d_m,
+                            "skew_rad": s_rad,
+                        }
+                    else:
+                        m = self.tag_memory[tid]
+                        m["x"] = 0.60 * tx + 0.40 * m["x"]
+                        m["y"] = 0.60 * ty + 0.40 * m["y"]
+                        m["yaw"] = math.atan2(m["y"] - self.odom_y, m["x"] - self.odom_x)
+                        m["dist_m"] = math.hypot(m["x"] - self.odom_x, m["y"] - self.odom_y)
+                        m["skew_rad"] = 0.55 * s_rad + 0.45 * m["skew_rad"]
+
+                    if tid == self.target_tag_id:
+                        target_det = d
+
+                if target_det is not None:
+                    self.tag_visible = True
+                    raw_d = float(target_det["dist_m"])
+                    alpha_d = 0.75 if raw_d < self.tag_dist_m else 0.55
+                    self.tag_dist_m = alpha_d * raw_d + (1.0 - alpha_d) * self.tag_dist_m
+                    self.tag_bearing_rad = 0.70 * float(target_det["bearing_rad"]) + 0.30 * self.tag_bearing_rad
+                    self.tag_skew_rad = 0.65 * float(target_det["skew_rad"]) + 0.35 * self.tag_skew_rad
+                    self.last_seen_time = now
+                    self.last_seen_dist = float(self.tag_dist_m)
+                    self.last_seen_odom_x = float(self.odom_x)
+                    self.last_seen_odom_y = float(self.odom_y)
+                else:
+                    self.tag_visible = False
+
+            # Update telemetry JSON at steady rate
+            try:
+                self._write_gui_telemetry_only(dets)
+            except Exception:
+                pass
             else:
                 time.sleep(0.002)
 
@@ -1063,6 +1135,89 @@ class FlatnessMissionNode(Node):
         sm.data = self.state
         self.pub_state.publish(sm)
 
+    def _write_gui_telemetry_only(self, all_dets: list):
+        try:
+            now = time.monotonic()
+            with self.lock:
+                fused_d = self._fused_distance(now)
+                wasd_active = now < self.manual_until
+                if self.estop_paused:
+                    gui_state = "PAUSED (E-STOP)"
+                elif wasd_active and self.state != "TELEOP":
+                    gui_state = "WASD TELEOP"
+                else:
+                    gui_state = self.state
+
+                payload = {
+                    "timestamp": round(now - self.start_time, 2),
+                    "mode": "HARDWARE (" + self.conn_type.upper() + ")" if self.hw_connected else "WSL SIMULATION",
+                    "state": gui_state,
+                    "target_tag_id": self.target_tag_id,
+                    "sweep_deg": round(min(360.0, math.degrees(self.sweep_rad)), 1),
+                    "fused_dist_m": round(float(fused_d), 3),
+                    "standoff_goal_m": self.standoff_m,
+                    "tag_visible": bool(self.tag_visible),
+                    "cam_dist_m": round(float(self.tag_dist_m), 3),
+                    "bearing_deg": round(math.degrees(self.tag_bearing_rad), 2),
+                    "skew_deg": round(math.degrees(self.tag_skew_rad), 2),
+                    "tof_dist_m": round(float(self.tof.dist_m), 3),
+                    "tof_active_ch": int(self.tof.active_idx),
+                    "tof_channels_mm": list(self.tof.channels_mm),
+                    "tof_status": list(self.tof.status),
+                    "vx": round(float(self.vx), 3),
+                    "vy": 0.0,
+                    "wz_rad": round(float(self.wz), 3),
+                    "wz_deg": round(math.degrees(self.wz), 1),
+                    "odom": [round(self.odom_x, 3), round(self.odom_y, 3), round(math.degrees(self.odom_yaw), 1)],
+                    "voltages": [round(float(v), 3) for v in self.voltages],
+                    "wheel_rads": [round(float(w), 2) for w in self.w_prev],
+                    "tuning": {
+                        "sweep_wz_rad": round(self.sweep_wz_rad, 2),
+                        "align_wz_max": round(self.align_wz_max, 2),
+                        "v_max_mps": round(self.v_max, 2),
+                        "v_min_mps": round(self.v_min, 2),
+                        "chase_wz_max": round(self.chase_wz_max, 2),
+                        "turn_radius_m": round(self.turn_radius_m, 2),
+                        "standoff_m": round(self.standoff_m, 2),
+                        "arm_x_mm": self.arm_x_mm,
+                        "arm_y_mm": self.arm_y_mm,
+                        "kp_bearing": round(self.kp_bearing, 2),
+                        "kp_skew": round(self.kp_skew, 2),
+                        "tag_size_mm": self.tag_size_mm,
+                        "tof_blocked_thresh_mm": self.tof_blocked_thresh_mm,
+                        "tof_mode": self.tof_mode,
+                    },
+                    "tag_memory": {
+                        str(k): {
+                            "x": round(v.get("x", 0.0), 2),
+                            "y": round(v.get("y", 0.0), 2),
+                            "yaw_deg": round(math.degrees(v["yaw"]), 1),
+                            "dist_m": round(v["dist_m"], 2),
+                            "skew_deg": round(math.degrees(v["skew_rad"]), 1),
+                        }
+                        for k, v in self.tag_memory.items()
+                    },
+                    "planned_path": self.planned_path_pts,
+                    "odom_trail": list(self.odom_trail),
+                    "table1": self.table1_rows[-18:],
+                    "trajectory_analysis": self.trajectory_analysis,
+                }
+
+            json_tmp = os.path.join(self.output_dir, "live_telemetry_tmp.json")
+            json_out = os.path.join(self.output_dir, "live_telemetry.json")
+            with open(json_tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            try:
+                os.replace(json_tmp, json_out)
+            except Exception:
+                try:
+                    import shutil
+                    shutil.copyfile(json_tmp, json_out)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def _write_gui_stream(self, raw_frame: np.ndarray, all_dets: list):
         try:
             vis_img = cv2.resize(raw_frame, (380, 214))
@@ -1153,7 +1308,7 @@ class FlatnessMissionNode(Node):
                         for k, v in self.tag_memory.items()
                     },
                     "planned_path": self.planned_path_pts,
-                    "odom_trail": self.odom_trail[-60:],
+                    "odom_trail": list(self.odom_trail),
                     "table1": self.table1_rows[-18:],
                     "trajectory_analysis": self.trajectory_analysis,
                 }

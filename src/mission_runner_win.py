@@ -270,6 +270,7 @@ class WindowsMissionRunner:
         self.odom_yaw = 0.0
         self.prev_yaw = None
         self.odom_trail = []
+        self.history_trails = []
 
         # Vision State & 2D World Spatial Tag Memory
         self.tag_visible = False
@@ -436,16 +437,14 @@ class WindowsMissionRunner:
                 except Exception as e:
                     print(f"[WARN] Sensor subscription note: {e}")
 
-                # Start native video stream
+                # Start native video stream on robot
                 try:
-                    self.ep_robot.camera.start_video_stream(display=False, resolution="360p")
-                    print("[+] Camera video stream started (360p native).")
-                except Exception:
-                    try:
-                        self.ep_robot.camera.start_video_stream(display=False)
-                        print("[+] Camera video stream started (default native).")
-                    except Exception as e:
-                        print(f"[WARN] Camera start note: {e}")
+                    self.ep_robot.camera._stream_sdk(1, "360p")
+                    self.ep_robot.camera._video_stream(1, "360p")
+                    self.ep_robot.camera._video_enable = True
+                    print("[+] RoboMaster camera hardware stream enabled (360p @ port 40921).")
+                except Exception as e:
+                    print(f"[WARN] Camera stream protocol start note: {e}")
 
                 return
             except Exception as e:
@@ -547,27 +546,64 @@ class WindowsMissionRunner:
     # =========================================================================
     def _camera_grabber_loop(self):
         """
-        Pure zero-latency camera frame grabber.
-        Pulls newest frame from hardware/sim at full 30 FPS directly into RAM.
+        Pure zero-latency camera frame grabber using OpenCV FFmpeg backend.
+        Pulls newest frame directly from RoboMaster TCP stream at port 40921 into RAM.
         Zero image processing, zero detection, zero disk I/O.
         """
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0|max_delay;0"
+        target_ip = "192.168.42.2" if self.conn_type == "rndis" else "192.168.2.1"
+        stream_url = f"tcp://{target_ip}:40921"
+        cap = None
+
         while not self._stop_evt.is_set():
-            frame = None
             if self.hw_connected and self.ep_robot is not None:
+                if cap is None or not cap.isOpened():
+                    try:
+                        cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
+                        if not cap.isOpened():
+                            cap.open(stream_url)
+                        if cap.isOpened():
+                            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                            print(f"[CAM] OpenCV low-latency stream capture connected to {stream_url}!")
+                        else:
+                            time.sleep(0.15)
+                            continue
+                    except Exception:
+                        time.sleep(0.15)
+                        continue
+
                 try:
-                    frame = self.ep_robot.camera.read_cv2_image(strategy="newest", timeout=0.06)
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        with self.lock:
+                            self.latest_raw_frame = frame
+                        self._new_frame_evt.set()
+                    else:
+                        time.sleep(0.004)
                 except Exception:
-                    frame = None
+                    if cap is not None:
+                        try:
+                            cap.release()
+                        except Exception:
+                            pass
+                    cap = None
+                    time.sleep(0.10)
+
             elif self.sim is not None:
                 time.sleep(0.030)
                 frame = self.sim.render_frame()
-
-            if frame is not None:
-                with self.lock:
-                    self.latest_raw_frame = frame
-                self._new_frame_evt.set()
+                if frame is not None:
+                    with self.lock:
+                        self.latest_raw_frame = frame
+                    self._new_frame_evt.set()
             else:
-                time.sleep(0.003)
+                time.sleep(0.04)
+
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
 
     # =========================================================================
     # Asynchronous Vision Worker (AprilTag Detection Decoupled from Video Display)
@@ -758,7 +794,7 @@ class WindowsMissionRunner:
 
             if len(self.odom_trail) == 0 or math.hypot(
                 self.odom_x - self.odom_trail[-1][0], self.odom_y - self.odom_trail[-1][1]
-            ) > 0.02:
+            ) > 0.015:
                 self.odom_trail.append([round(self.odom_x, 3), round(self.odom_y, 3)])
 
             vis = self.tag_visible
@@ -1160,7 +1196,8 @@ class WindowsMissionRunner:
                         for k, v in self.tag_memory.items()
                     },
                     "planned_path": self.planned_path_pts,
-                    "odom_trail": self.odom_trail[-60:],
+                    "odom_trail": list(self.odom_trail),
+                    "history_trails": [list(t) for t in self.history_trails],
                     "table1": self.table1_rows[-18:],
                     "trajectory_analysis": self.trajectory_analysis,
                 }
@@ -1230,7 +1267,9 @@ class WindowsMissionRunner:
                     self.odom_y = 0.0
                     self.odom_yaw = 0.0
                     self.prev_yaw = None
-                    self.odom_trail.clear()
+                    if len(self.odom_trail) > 1:
+                        self.history_trails.append(list(self.odom_trail))
+                    self.odom_trail = [[round(self.odom_x, 3), round(self.odom_y, 3)]]
                     self.planned_path_pts.clear()
                     self.table1_rows.clear()
                     self.continuous_rows.clear()
@@ -1279,7 +1318,9 @@ class WindowsMissionRunner:
             self.mission_done = False
             self.table1_rows.clear()
             self.continuous_rows.clear()
-            self.odom_trail.clear()
+            if len(self.odom_trail) > 1:
+                self.history_trails.append(list(self.odom_trail))
+            self.odom_trail = [[round(self.odom_x, 3), round(self.odom_y, 3)]]
             self.last_logged_sec = -1
             self._halted = False
             self.sweep_rad = 0.0
@@ -1296,6 +1337,8 @@ class WindowsMissionRunner:
     def return_to_teleop(self):
         """Returns to manual teleoperation so the robot can be repositioned."""
         with self.lock:
+            if len(self.odom_trail) > 1 and self.state in ("CHASING", "ARRIVED (20cm)", "ALIGNING"):
+                self.history_trails.append(list(self.odom_trail))
             self.state = "TELEOP"
             self.state_time = time.monotonic()
             self.manual_until = 0.0
@@ -1386,31 +1429,48 @@ class WindowsMissionRunner:
                     for k, v in self.tag_memory.items()
                 },
                 "planned_path": self.planned_path_pts,
-                "odom_trail": self.odom_trail[-60:],
+                "odom_trail": list(self.odom_trail),
+                "history_trails": [list(t) for t in self.history_trails],
                 "table1": self.table1_rows[-18:],
                 "trajectory_analysis": self.trajectory_analysis,
             }
 
-    def _save_csv_logs(self):
+    def save_run_results(self):
+        """
+        Saves all run artifacts: Table 1 CSV, continuous telemetry CSV,
+        path_followed.csv, and triggers run_archiver to generate publication-quality
+        2D planned vs actual path map and velocity plots.
+        """
         try:
+            # 1. Save Table 1 discrete 1-sec log
             t1_path = os.path.join(self.output_dir, "motor_voltage_log.csv")
             with open(t1_path, "w", newline="") as f:
                 w = csv.writer(f)
                 w.writerow(["t_s", "V1_V", "V2_V", "V3_V", "V4_V", "State"])
                 w.writerows(self.table1_rows)
 
+            # 2. Save 20 Hz continuous telemetry stream
             c_path = os.path.join(self.output_dir, "motor_voltage_continuous.csv")
             with open(c_path, "w", newline="") as f:
                 w = csv.writer(f)
                 w.writerow(["t_s", "V1_V", "V2_V", "V3_V", "V4_V", "vx_mps", "vy_mps", "wz_radps", "dist_m", "bearing_deg", "skew_deg", "state"])
                 w.writerows(self.continuous_rows)
 
-            # Auto-archive run with dedicated folder and generated graphs
+            # 3. Save exact followed 2D path coordinates
+            p_path = os.path.join(self.output_dir, "path_followed.csv")
+            with open(p_path, "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["idx", "x_m", "y_m"])
+                for idx, pt in enumerate(self.odom_trail):
+                    w.writerow([idx, pt[0], pt[1]])
+
+            # 4. Auto-archive run with dedicated folder and generated graphs
             try:
                 import datetime
+                import shutil
                 from run_archiver import archive_run
                 run_tag = f"run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_tag{self.target_tag_id}"
-                archive_run(
+                run_dir = archive_run(
                     run_tag,
                     t1_path,
                     c_path,
@@ -1419,10 +1479,22 @@ class WindowsMissionRunner:
                     standoff=self.standoff_m,
                     trajectory_meta=getattr(self, 'trajectory_analysis', None)
                 )
+                if run_dir and os.path.exists(run_dir):
+                    # Copy generated plot to latest_path_2d.png and report/
+                    src_plot = os.path.join(run_dir, "path_2d_planned_vs_actual.png")
+                    if os.path.exists(src_plot):
+                        shutil.copyfile(src_plot, os.path.join(self.output_dir, "latest_path_2d.png"))
+                        rep_dir = os.path.join(self.output_dir, "report")
+                        if os.path.exists(rep_dir):
+                            shutil.copyfile(src_plot, os.path.join(rep_dir, "fig_path_2d_planned_vs_actual.png"))
+                    print(f"[+] Run archived and 2D path plot saved to: {run_dir}")
             except Exception as e:
-                print(f"[!] Auto-archive error: {e}")
-        except Exception:
-            pass
+                print(f"[!] Auto-archive note: {e}")
+        except Exception as e:
+            print(f"[!] Save run results error: {e}")
+
+    def _save_csv_logs(self):
+        self.save_run_results()
 
     def cleanup(self):
         self._stop_evt.set()
@@ -1436,7 +1508,11 @@ class WindowsMissionRunner:
         if self.hw_connected and self.ep_robot is not None:
             try:
                 self.ep_robot.chassis.drive_speed(x=0.0, y=0.0, z=0.0, timeout=0.5)
-                self.ep_robot.camera.stop_video_stream()
+                try:
+                    self.ep_robot.camera._video_stream(0)
+                    self.ep_robot.camera._stream_sdk(0)
+                except Exception:
+                    pass
                 self.ep_robot.close()
             except Exception:
                 pass
