@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
 """
-vision_tof.py - AprilTag Parallel Vision Detector & Dual Front ToF Auto-Selector (v4)
-=====================================================================================
-1. FrontToFSelector:
-   - Parses all 4 channels of `sub_distance` (`[d0, d1, d2, d3]`).
-   - Distinguishes the ToF sensor BLOCKED_BY_ARM (short, static reading invariant to
-     robot rotation/motion) from the STRAIGHT_CLEAR ToF sensor (varies during sweep
-     and tracks obstacles ahead).
-   - Among unblocked channels, uses the closest valid reading so the robot never
-     ignores an approaching obstacle/tag.
-2. AprilTagDetector:
-   - Detects AprilTags across the full camera frame (including between the gripper
-     jaws at close range < 30 cm so the robot never goes blind near the tag).
-   - Calibrated for the 60 mm printable AprilTags (48 mm inner black marker square)
-     plus downward-camera floor elevation geometry so 20 cm standoff is accurate.
+vision_tof.py - AprilTag Visual Estimation and Front ToF Sensor Management
+===========================================================================
+Performs AprilTag corner quad detection, 3D tag pose estimation, and relative
+bearing/skew geometry calculations for closed-loop nonholonomic unicycle guidance.
+Manages ToF range telemetry and unblocked line-of-sight filtering.
 """
 
 import math

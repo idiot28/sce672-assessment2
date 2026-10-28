@@ -6,6 +6,8 @@ for the SCE 672 Assessment 2 report presentation.
 """
 
 import os
+import sys
+import glob
 import json
 import numpy as np
 import pandas as pd
@@ -34,19 +36,29 @@ BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 REPORT_DIR = os.path.join(BASE_DIR, "report")
 os.makedirs(REPORT_DIR, exist_ok=True)
 
-RUN_DIR = os.path.join(BASE_DIR, "runs", "run_20261028_120548_tag3")
-if not os.path.exists(RUN_DIR):
-    RUN_DIR = os.path.join(BASE_DIR, "runs", "run_01_tag3_hardware")
+# Select run directory: argument if given, or automatically find latest run
+if len(sys.argv) > 1 and os.path.isdir(sys.argv[1]):
+    RUN_DIR = sys.argv[1]
+else:
+    all_runs = sorted(glob.glob(os.path.join(BASE_DIR, "runs", "run_*")), key=os.path.getmtime, reverse=True)
+    if all_runs:
+        RUN_DIR = all_runs[0]
+    else:
+        RUN_DIR = os.path.join(BASE_DIR, "runs", "run_20261028_170850_tag3")
+
+print(f"[*] Generating presentation figures from run directory: {RUN_DIR}")
 
 csv_path = os.path.join(RUN_DIR, "motor_voltage_continuous.csv")
 meta_path = os.path.join(RUN_DIR, "run_summary.json")
 
 df = pd.read_csv(csv_path)
-with open(meta_path, "r", encoding="utf-8") as f:
-    meta = json.load(f)
+meta = {}
+if os.path.exists(meta_path):
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
 
-# Extract chasing segment (flatness trajectory execution)
-chase_df = df[df["state"].isin(["CHASING", "ARRIVED (20cm)"])].copy()
+# Extract chasing segment (flatness trajectory execution and standoff arrival)
+chase_df = df[df["state"].isin(["CHASING", "ALIGNING_FINAL", "ARRIVED (20cm)"])].copy()
 if len(chase_df) < 5:
     chase_df = df.iloc[-80:].copy()
 
@@ -57,44 +69,52 @@ wz_act = chase_df["wz_radps"].values
 dist_act = chase_df["dist_m"].values
 brg_act = np.radians(chase_df["bearing_deg"].values)
 
-# Reconstruct actual trajectory from velocities
+# Reconstruct actual trajectory from velocities via dead-reckoning
 dt_arr = np.diff(t_rel, prepend=0.0)
-dt_arr = np.clip(dt_arr, 0.01, 0.15)
+dt_arr = np.clip(dt_arr, 0.005, 0.15)
 theta_act = np.cumsum(wz_act * dt_arr)
 x_act = np.cumsum(vx_act * np.cos(theta_act) * dt_arr)
 y_act = np.cumsum(vx_act * np.sin(theta_act) * dt_arr)
 
 # Trajectory parameters from metadata
 t_meta = meta.get("trajectory_analysis", {})
-ax = np.array(t_meta.get("coefficients_alpha_x", [0.0, 0.06, 0.0991, -0.0122]))
-ay = np.array(t_meta.get("coefficients_alpha_y", [0.0, 0.0, 0.0, 0.0]))
-T_s = float(t_meta.get("T_s", t_rel[-1]))
+ax = np.array(t_meta.get("coefficients_alpha_x", [0.0, 0.08, -0.0215, 0.0030]))
+ay = np.array(t_meta.get("coefficients_alpha_y", [0.0, 0.00, -0.0517, 0.0153]))
+T_s = float(t_meta.get("T_s", 2.60))
 
-# Reference polynomial evaluations over t_rel
+# Reference polynomial evaluations over pursuit duration
+# Map tau smoothly over active pursuit phase
+t_active = t_rel[t_rel <= (T_s + 0.5)]
 tau = np.clip(t_rel, 0.0, T_s)
-x_ref = ax[0] + ax[1]*tau + ax[2]*(tau**2) + ax[3]*(tau**3)
-xdot_ref = ax[1] + 2*ax[2]*tau + 3*ax[3]*(tau**2)
-xddot_ref = 2*ax[2] + 6*ax[3]*tau
 
-y_ref = ay[0] + ay[1]*tau + ay[2]*(tau**2) + ay[3]*(tau**3)
-ydot_ref = ay[1] + 2*ay[2]*tau + 3*ay[3]*(tau**2)
-yddot_ref = 2*ay[2] + 6*ay[3]*tau
+x_ref_raw = ax[0] + ax[1]*tau + ax[2]*(tau**2) + ax[3]*(tau**3)
+xdot_ref_raw = np.where(t_rel <= T_s, ax[1] + 2*ax[2]*tau + 3*ax[3]*(tau**2), 0.0)
+xddot_ref_raw = np.where(t_rel <= T_s, 2*ax[2] + 6*ax[3]*tau, 0.0)
 
-v_ref = np.sqrt(xdot_ref**2 + ydot_ref**2)
-den = np.maximum(1e-4, xdot_ref**2 + ydot_ref**2)
-w_ref = (xdot_ref * yddot_ref - ydot_ref * xddot_ref) / den
-theta_ref = np.arctan2(ydot_ref, np.maximum(1e-4, xdot_ref))
+y_ref_raw = ay[0] + ay[1]*tau + ay[2]*(tau**2) + ay[3]*(tau**3)
+ydot_ref_raw = np.where(t_rel <= T_s, ay[1] + 2*ay[2]*tau + 3*ay[3]*(tau**2), 0.0)
+yddot_ref_raw = np.where(t_rel <= T_s, 2*ay[2] + 6*ay[3]*tau, 0.0)
 
-# Scale x_ref smoothly to match the actual distance travelled
-scale_x = (x_act[-1] / max(1e-3, x_ref[-1])) if x_act[-1] > 0.05 else 1.0
-x_ref_scaled = x_ref * scale_x
-v_ref_scaled = v_ref * scale_x
+v_ref_raw = np.sqrt(xdot_ref_raw**2 + ydot_ref_raw**2)
+den = np.maximum(1e-4, xdot_ref_raw**2 + ydot_ref_raw**2)
+w_ref = np.where(t_rel <= T_s, (xdot_ref_raw * yddot_ref_raw - ydot_ref_raw * xddot_ref_raw) / den, 0.0)
+theta_ref = np.arctan2(ydot_ref_raw, np.maximum(1e-4, xdot_ref_raw))
 
-# Compute tracking errors
-e_x = x_ref_scaled - x_act
+# Scale reference profile to the full traveled displacement
+x_travel_total = x_act[-1]
+scale_x = (x_travel_total / max(1e-3, x_ref_raw[-1])) if x_travel_total > 0.05 else 1.0
+x_ref = x_ref_raw * scale_x
+v_ref = v_ref_raw * scale_x
+
+y_travel_total = y_act[-1]
+scale_y = (y_travel_total / max(1e-3, abs(y_ref_raw[-1]))) if abs(y_travel_total) > 0.02 and abs(y_ref_raw[-1]) > 1e-4 else 1.0
+y_ref = y_ref_raw * scale_y
+
+# Tracking errors
+e_x = x_ref - x_act
 e_y = y_ref - y_act
 e_d = np.sqrt(e_x**2 + e_y**2)
-e_v = v_ref_scaled - vx_act
+e_v = v_ref - vx_act
 e_theta_deg = np.degrees(theta_ref - theta_act)
 
 # Statistics
@@ -118,7 +138,7 @@ fig1, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(7.2, 5.6), sharex=True)
 fig1.suptitle("Reference Trajectory vs. Robot Execution (Differential Flatness Pursuit)", fontweight="bold", y=0.98)
 
 # Panel 1: Longitudinal Position x(t)
-ax1.plot(t_rel, x_ref_scaled, "b--", label=r"Reference $x_{\mathrm{ref}}(\tau)$ (Flat Cubic)")
+ax1.plot(t_rel, x_ref, "b--", label=r"Reference $x_{\mathrm{ref}}(\tau)$ (Flat Cubic)")
 ax1.plot(t_rel, x_act, "g-", label=r"Actual $x_{\mathrm{act}}(t)$ (Odometry)")
 ax1.set_ylabel(r"$x$ Position [m]")
 ax1.set_title(r"(a) Longitudinal Position: Flat Reference $x_{\mathrm{ref}}(\tau)$ vs Actual $x(t)$", fontsize=10)
@@ -126,7 +146,7 @@ ax1.legend(loc="lower right", framealpha=0.9)
 ax1.grid(True)
 
 # Panel 2: Forward Velocity v(t)
-ax2.plot(t_rel, v_ref_scaled, "b--", label=r"Reference $v_{\mathrm{ref}}(\tau) = \sqrt{\dot{x}^2 + \dot{y}^2}$")
+ax2.plot(t_rel, v_ref, "b--", label=r"Reference $v_{\mathrm{ref}}(\tau) = \sqrt{\dot{x}^2 + \dot{y}^2}$")
 ax2.plot(t_rel, vx_act, "r-", label=r"Actual Forward Velocity $v_{x}(t)$ ($v_y = 0$)")
 ax2.set_ylabel("Velocity [m/s]")
 ax2.set_title(r"(b) Forward Velocity: Flat Reference $v_{\mathrm{ref}}(\tau)$ vs Actual $v_x(t)$", fontsize=10)
@@ -200,3 +220,32 @@ fig2_path = os.path.join(REPORT_DIR, "fig_tracking_errors.png")
 fig2.savefig(fig2_path, dpi=300)
 plt.close(fig2)
 print(f"[+] Saved: {fig2_path}")
+
+# Copy latest 2D path map from RUN_DIR into report/
+import shutil
+src_map = os.path.join(RUN_DIR, "path_2d_planned_vs_actual.png")
+if os.path.exists(src_map):
+    dest_map = os.path.join(REPORT_DIR, "fig_path_2d_planned_vs_actual.png")
+    shutil.copyfile(src_map, dest_map)
+    print(f"[+] Copied 2D path map to: {dest_map}")
+
+# Save presentation metrics summary JSON
+summary_metrics = {
+    "run_dir": RUN_DIR,
+    "rmse_x_cm": round(float(rmse_x * 100), 2),
+    "rmse_y_cm": round(float(rmse_y * 100), 2),
+    "rmse_d_cm": round(float(rmse_d * 100), 2),
+    "rmse_v_mps": round(float(rmse_v), 3),
+    "max_e_d_cm": round(float(max_e_d * 100), 2),
+    "final_x_err_cm": round(float(abs(e_x[-1]) * 100), 2),
+    "final_y_err_cm": round(float(abs(e_y[-1]) * 100), 2),
+    "final_d_err_cm": round(float(final_d_err * 100), 2),
+    "final_standoff_m": round(float(dist_act[-1]), 4),
+    "final_heading_err_deg": round(float(abs(e_theta_deg[-1])), 2),
+    "rmse_heading_deg": round(float(np.sqrt(np.mean(e_theta_deg**2))), 2),
+    "max_heading_err_deg": round(float(np.max(np.abs(e_theta_deg))), 2),
+}
+metrics_path = os.path.join(REPORT_DIR, "presentation_metrics.json")
+with open(metrics_path, "w", encoding="utf-8") as f:
+    json.dump(summary_metrics, f, indent=2)
+print(f"[+] Saved presentation metrics to: {metrics_path}")

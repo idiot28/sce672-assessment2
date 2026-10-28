@@ -1021,7 +1021,7 @@ class DebugApp:
                     # Dashed green sightline directly connecting standoff point to tag face!
                     c.create_line(u_goal, v_goal, u_tag, v_tag, fill="#10b981", width=1.5, dash=(2, 2))
         else:
-            # Tag NOT yet discovered! Never draw fake Tag 3 or fake path!
+            # Target tag not yet discovered; await visual landmark detection before rendering target path
             c.create_text(px0 + pw // 2, py0 + 24, text=f"Target Tag {tgt_id} not discovered yet — Scanning 360°", fill="#64748b", font=("Segoe UI", 8, "italic"))
 
         # 1. Draw Past History Trails (subtle dark green, persistent)

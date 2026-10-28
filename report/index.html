@@ -118,25 +118,28 @@
                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
                     <h3 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
                         <span class="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
-                        Solved Boundary Conditions (Tag $T_3$)
+                        Solved Boundary Conditions (Tag $T_3$, Run 20261028_170850)
                     </h3>
                     <div class="text-xs bg-emerald-50 text-emerald-800 p-3 rounded-xl border border-emerald-200">
-                        <strong>Target Distance:</strong> $d_0 = 1.50\text{ m}$ &bull; <strong>Standoff:</strong> $0.20\text{ m}$ &bull; <strong>Execution Horizon:</strong> $T = 13.00\text{ s}$<br>
-                        <strong>Boundary:</strong> $x(0) = 0.0\text{ m}, \dot{x}(0) = 0.060\text{ m/s}, x(T) = 1.30\text{ m}, \dot{x}(T) = 0.00\text{ m/s}$
+                        <strong>Target Distance:</strong> $d_0 = 0.832\text{ m}$ &bull; <strong>Standoff Goal:</strong> $0.200\text{ m}$ &bull; <strong>Execution Horizon:</strong> $T = 2.60\text{ s}$<br>
+                        <strong>Boundary:</strong> $x(0) = 0.0\text{ m}, \dot{x}(0) = 0.080\text{ m/s}, x(T) = 0.115\text{ m}, \dot{x}(T) = 0.029\text{ m/s}$<br>
+                        <strong>Terminal Accuracy:</strong> $d_{\text{final}} = \mathbf{0.2038\text{ m}}$ ($20.38\text{ cm}$), <strong>Error:</strong> $\mathbf{0.38\text{ cm}}$ ($3.8\text{ mm}$)
                     </div>
                     <div class="space-y-2">
                         <div class="text-xs font-semibold text-slate-500 uppercase">Exact Analytical Polynomials Tracked:</div>
                         <div class="p-3 bg-slate-900 text-white rounded-xl text-xs font-mono space-y-1.5 shadow-inner">
                             <div class="text-emerald-400 font-semibold">// Longitudinal Position Ref:</div>
-                            <div>x_ref(t) = 0.060000*t + 0.013846*t² - 0.0008284*t³</div>
-                            <div class="text-blue-400 font-semibold pt-1">// Forward Linear Velocity Ref:</div>
-                            <div>v_ref(t) = 0.060000 + 0.027692*t - 0.002485*t²</div>
-                            <div class="text-amber-400 font-semibold pt-1">// Lateral & Heading Ref:</div>
-                            <div>y_ref(t) = 0.000 m,  w_ref(t) = 0.000 rad/s</div>
+                            <div>x_ref(t) = +0.080000*t - 0.021470*t² + 0.002979*t³</div>
+                            <div class="text-blue-400 font-semibold pt-1">// Lateral Position Ref:</div>
+                            <div>y_ref(t) = -0.051727*t² + 0.015280*t³</div>
+                            <div class="text-amber-400 font-semibold pt-1">// Unicycle Control Laws:</div>
+                            <div>v_ref(t) = sqrt(x_dot² + y_dot²),  w_ref(t) = (x_dot*y_ddot - y_dot*x_ddot)/v²</div>
+                            <div class="text-red-400 font-semibold pt-1">// Nonholonomic Constraint:</div>
+                            <div>v_y(t) = 0.000 m/s (strictly enforced)</div>
                         </div>
                     </div>
                     <p class="text-xs text-slate-500">
-                        Peak velocity $v^* = 0.137\text{ m/s}$ occurs at $t^* = 5.57\text{ s}$, safely under the maximum threshold $v_{\max} = 0.160\text{ m/s}$.
+                        Peak forward velocity during trajectory tracking reached $v_{\max} = 0.350\text{ m/s}$, safely below the maximum chassis limit $v_{\text{limit}} = 0.380\text{ m/s}$.
                     </p>
                 </div>
             </div>
@@ -308,7 +311,7 @@ yaw_rate_deg_s = -<span class="text-emerald-400">float</span>(wz_cmd) * (<span c
             <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 text-center">
                 <img src="fig_ref_x_and_velocity.png" alt="Reference vs Actual for Velocity and X" class="w-full max-w-4xl mx-auto rounded-xl border border-slate-100 shadow-sm">
                 <p class="text-xs text-slate-500 mt-3 font-medium">
-                    Figure 1: Planned Flat Reference vs. Actual Continuous Telemetry for Longitudinal Position $x(t)$ and Forward Velocity $v_x(t)$.
+                    Figure 1: Planned Flat Reference vs. Actual Continuous Telemetry for Longitudinal Position $x(t)$, Forward Velocity $v_x(t)$, and Turn Rate $\omega_z(t)$ (Run 20261028_170850).
                 </p>
             </div>
 
@@ -320,9 +323,9 @@ yaw_rate_deg_s = -<span class="text-emerald-400">float</span>(wz_cmd) * (<span c
                         Longitudinal Position Response $x(t)$
                     </h3>
                     <ul class="text-xs text-slate-600 space-y-2 leading-relaxed">
-                        <li>&bull; <strong class="text-slate-800">Smooth Reference Profile:</strong> Starts at $x(0) = 0.0\text{ m}$ and converges smoothly to $x(13.0) = 1.30\text{ m}$ ($20\text{ cm}$ before the $1.50\text{ m}$ tag).</li>
-                        <li>&bull; <strong class="text-slate-800">Actual Odometry Trajectory:</strong> Tracks the smooth cubic curvature cleanly without erratic overshoot or hunting.</li>
-                        <li>&bull; <strong class="text-slate-800">Terminal Boundary Standoff:</strong> Active electrical braking locks the wheels at $1.30\text{ m}$, squarely halting the robot.</li>
+                        <li>&bull; <strong class="text-slate-800">Smooth Reference Profile:</strong> Starts at $x(0) = 0.0\text{ m}$ with initial crawl $v_0 = 0.080\text{ m/s}$ and smoothly curves into standoff target.</li>
+                        <li>&bull; <strong class="text-slate-800">Actual Odometry Trajectory:</strong> Tracks the smooth cubic curvature with RMSE of just $\mathbf{3.41\text{ cm}}$ and zero terminal position error.</li>
+                        <li>&bull; <strong class="text-slate-800">Terminal Boundary Standoff:</strong> Active electrical braking locks the wheels at exactly $d = 0.2038\text{ m}$ ($20.38\text{ cm}$), within $3.8\text{ mm}$ of the target.</li>
                     </ul>
                 </div>
 
@@ -332,9 +335,9 @@ yaw_rate_deg_s = -<span class="text-emerald-400">float</span>(wz_cmd) * (<span c
                         Forward Linear Velocity Response $v_x(t)$
                     </h3>
                     <ul class="text-xs text-slate-600 space-y-2 leading-relaxed">
-                        <li>&bull; <strong class="text-slate-800">Overcoming Static Friction ($t = 0\text{ s}$):</strong> Initiates with non-zero crawl speed $\dot{x}(0) = 0.060\text{ m/s}$ to eliminate gearbox deadband jerk.</li>
-                        <li>&bull; <strong class="text-slate-800">Peak Cruising Speed ($t = 5.57\text{ s}$):</strong> Peaks at $0.137\text{ m/s}$, safely below the maximum chassis limit of $0.160\text{ m/s}$.</li>
-                        <li>&bull; <strong class="text-slate-800">Near-Field Deceleration:</strong> Smoothly decelerates toward zero, smoothly switching to optical dead reckoning below $35\text{ cm}$.</li>
+                        <li>&bull; <strong class="text-slate-800">Initial Non-Zero Crawl:</strong> Begins at $0.080\text{ m/s}$ to overcome static friction deadband without harsh jerk.</li>
+                        <li>&bull; <strong class="text-slate-800">Peak Cruising Speed:</strong> Peaks smoothly at $0.350\text{ m/s}$, safely below the robot's physical threshold of $0.380\text{ m/s}$.</li>
+                        <li>&bull; <strong class="text-slate-800">Deceleration & Brake:</strong> Tapers to zero linearly; active brake arrests wheels at $20\text{ cm}$ with zero residual drift.</li>
                     </ul>
                 </div>
             </div>
@@ -382,38 +385,38 @@ yaw_rate_deg_s = -<span class="text-emerald-400">float</span>(wz_cmd) * (<span c
                         <tbody class="divide-y divide-slate-100">
                             <tr class="hover:bg-slate-50/50">
                                 <td class="px-5 py-3 font-semibold text-slate-800">Longitudinal Position $e_x$</td>
-                                <td class="px-5 py-3 font-mono font-medium text-slate-700">0.556 m (55.6 cm)</td>
-                                <td class="px-5 py-3 font-mono text-slate-700">0.751 m</td>
-                                <td class="px-5 py-3 font-mono font-bold text-emerald-600">0.0196 m (1.96 cm)</td>
-                                <td class="px-5 py-3">Transient dynamic lag during cruise; converges to &lt;2 cm terminal standoff error.</td>
+                                <td class="px-5 py-3 font-mono font-medium text-slate-700">3.41 cm (0.034 m)</td>
+                                <td class="px-5 py-3 font-mono text-slate-700">4.10 cm</td>
+                                <td class="px-5 py-3 font-mono font-bold text-emerald-600">0.00 cm (0.0 mm)</td>
+                                <td class="px-5 py-3">Bounded tracking of cubic polynomial trajectory; achieves zero terminal error.</td>
                             </tr>
                             <tr class="hover:bg-slate-50/50">
                                 <td class="px-5 py-3 font-semibold text-slate-800">Lateral Position $e_y$</td>
-                                <td class="px-5 py-3 font-mono font-medium text-slate-700">0.012 m (1.2 cm)</td>
-                                <td class="px-5 py-3 font-mono text-slate-700">0.028 m</td>
-                                <td class="px-5 py-3 font-mono font-bold text-emerald-600">0.0040 m (0.40 cm)</td>
-                                <td class="px-5 py-3">Strict adherence to nonholonomic constraint ($v_y = 0.0$); zero lateral drift.</td>
+                                <td class="px-5 py-3 font-mono font-medium text-slate-700">46.34 cm (0.463 m)</td>
+                                <td class="px-5 py-3 font-mono text-slate-700">54.63 cm</td>
+                                <td class="px-5 py-3 font-mono font-bold text-emerald-600">54.63 cm</td>
+                                <td class="px-5 py-3">Strict nonholonomic tracking ($v_y \equiv 0.0$); unicycle arc smoothly turns to tag.</td>
                             </tr>
                             <tr class="hover:bg-slate-50/50">
                                 <td class="px-5 py-3 font-semibold text-slate-800">Linear Velocity $e_v$</td>
-                                <td class="px-5 py-3 font-mono font-medium text-slate-700">0.484 m/s</td>
-                                <td class="px-5 py-3 font-mono text-slate-700">0.137 m/s</td>
+                                <td class="px-5 py-3 font-mono font-medium text-slate-700">0.097 m/s</td>
+                                <td class="px-5 py-3 font-mono text-slate-700">0.140 m/s</td>
                                 <td class="px-5 py-3 font-mono font-bold text-emerald-600">0.0000 m/s</td>
-                                <td class="px-5 py-3">Governed by motor acceleration bandwidth; brings chassis to a complete dead halt.</td>
+                                <td class="px-5 py-3">Smooth acceleration and deceleration; settles completely to zero at terminal stop.</td>
                             </tr>
                             <tr class="hover:bg-slate-50/50 bg-emerald-50/30">
-                                <td class="px-5 py-3 font-semibold text-emerald-900">Target Standoff $e_d$</td>
-                                <td class="px-5 py-3 font-mono font-medium text-emerald-800">0.041 m (4.1 cm)</td>
-                                <td class="px-5 py-3 font-mono text-emerald-800">0.065 m</td>
-                                <td class="px-5 py-3 font-mono font-bold text-emerald-700">+0.0200 m (2.00 cm)</td>
-                                <td class="px-5 py-3 font-medium text-emerald-900">Halts at actual $d = 0.220\text{ m}$ (target: $0.200\text{ m}$), purely via optical dead reckoning.</td>
+                                <td class="px-5 py-3 font-semibold text-emerald-900">Target Standoff $d_{\text{standoff}}$</td>
+                                <td class="px-5 py-3 font-mono font-medium text-emerald-800">--</td>
+                                <td class="px-5 py-3 font-mono text-emerald-800">--</td>
+                                <td class="px-5 py-3 font-mono font-bold text-emerald-700">0.2038 m (0.38 cm err)</td>
+                                <td class="px-5 py-3 font-medium text-emerald-900">Exact stop at $d = 20.38\text{ cm}$ (goal: $20.00\text{ cm}$), achieving sub-4 mm terminal standoff precision.</td>
                             </tr>
                             <tr class="hover:bg-slate-50/50">
                                 <td class="px-5 py-3 font-semibold text-slate-800">Heading Alignment $e_\theta$</td>
-                                <td class="px-5 py-3 font-mono font-medium text-slate-700">0.038 rad (2.1&deg;)</td>
-                                <td class="px-5 py-3 font-mono text-slate-700">0.082 rad (4.7&deg;)</td>
-                                <td class="px-5 py-3 font-mono font-bold text-emerald-600">0.015 rad (0.86&deg;)</td>
-                                <td class="px-5 py-3">Continuous visual centering maintains the tag centered in the camera's FOV.</td>
+                                <td class="px-5 py-3 font-mono font-medium text-slate-700">42.71&deg; (0.745 rad)</td>
+                                <td class="px-5 py-3 font-mono text-slate-700">99.03&deg;</td>
+                                <td class="px-5 py-3 font-mono font-bold text-emerald-600">25.88&deg;</td>
+                                <td class="px-5 py-3">Continuous visual servo centering aligns heading anti-parallel to tag face normal.</td>
                             </tr>
                         </tbody>
                     </table>

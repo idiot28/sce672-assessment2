@@ -1,0 +1,15 @@
+{
+  "run_dir": "D:\\phd\\sce672 - advanced robotics\\project apriltag v4\\runs\\run_20261028_170850_tag3",
+  "rmse_x_cm": 3.41,
+  "rmse_y_cm": 46.34,
+  "rmse_d_cm": 46.47,
+  "rmse_v_mps": 0.097,
+  "max_e_d_cm": 54.63,
+  "final_x_err_cm": 0.0,
+  "final_y_err_cm": 54.63,
+  "final_d_err_cm": 0.38,
+  "final_standoff_m": 0.2038,
+  "final_heading_err_deg": 25.88,
+  "rmse_heading_deg": 42.71,
+  "max_heading_err_deg": 99.03
+}

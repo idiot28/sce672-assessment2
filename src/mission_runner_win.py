@@ -326,7 +326,7 @@ class WindowsMissionRunner:
         if target_tag_id is not None:
             self.target_tag_id = int(target_tag_id)
 
-        # Do NOT pre-compute a fake path before discovering the target tag
+        # Initialize planned path points (populated upon target tag detection)
         self.planned_path_pts = []
 
         # Initialize Hardware or Simulation

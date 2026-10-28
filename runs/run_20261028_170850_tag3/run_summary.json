@@ -1,0 +1,184 @@
+{
+  "run_id": "run_20261028_170850_tag3",
+  "timestamp": "2026-10-28 17:08:59",
+  "target_tag": 3,
+  "initial_distance_m": 1.5,
+  "final_standoff_m": 0.204,
+  "total_duration_s": 30.02,
+  "peak_velocity_mps": 0.35,
+  "final_motor_voltage_V": 0.0,
+  "status": "COMPLETED (ARRIVED AT 20CM STANDOFF)",
+  "initial_poses_before_chase": {
+    "timestamp_iso": "2026-10-28T17:08:41.631637",
+    "timestamp_s": 1793196521.632,
+    "mission_state_before_chase": "ALIGNING",
+    "robot_pose": {
+      "x_m": -0.0014,
+      "y_m": -0.0061,
+      "yaw_rad": -1.971,
+      "yaw_deg": -112.93,
+      "v0_mps": 0.08
+    },
+    "target_tag": {
+      "tag_id": 3,
+      "rel_dist_m": 0.832,
+      "rel_bearing_rad": -0.1502,
+      "rel_bearing_deg": -8.6,
+      "rel_skew_rad": -0.0264,
+      "rel_skew_deg": -1.51,
+      "world_x_m": -0.4365,
+      "world_y_m": -0.7153,
+      "world_yaw_deg": -121.53,
+      "tag_normal_world_deg": 90.84,
+      "arrival_heading_world_deg": -89.16,
+      "standoff_m": 0.2,
+      "standoff_world_x_m": -0.4394,
+      "standoff_world_y_m": -0.5153,
+      "face_to_face_target_deg": 180.0
+    },
+    "all_tags_in_memory": {
+      "3": {
+        "tag_id": 3,
+        "world_x_m": -0.4365,
+        "world_y_m": -0.7153,
+        "world_yaw_deg": -121.53,
+        "normal_world_deg": 90.84,
+        "rel_dist_m": 0.832,
+        "rel_bearing_deg": -8.6,
+        "rel_skew_deg": -1.51,
+        "is_target": true
+      }
+    },
+    "boundary_conditions": {
+      "d0_m": 0.832,
+      "standoff_m": 0.2,
+      "v0_mps": 0.08,
+      "xf_rel_m": 0.6396,
+      "yf_rel_m": -0.2051,
+      "arrival_heading_world_deg": -89.16
+    }
+  },
+  "trajectory_analysis": {
+    "d0_m": 0.2446,
+    "bearing_deg": 19.71,
+    "skew_deg": -20.84,
+    "standoff_m": 0.2,
+    "T_s": 2.6,
+    "goal_pose": {
+      "xf_m": 0.1152,
+      "yf_m": -0.0811,
+      "heading_deg": 54.88
+    },
+    "boundary_matrix_M": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        1.0,
+        2.6,
+        6.760000000000001,
+        17.576
+      ],
+      [
+        0.0,
+        1.0,
+        5.2,
+        20.28
+      ]
+    ],
+    "boundary_matrix_M_inv": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        -0.44378698224852065,
+        -0.7692307692307692,
+        0.44378698224852065,
+        -0.3846153846153846
+      ],
+      [
+        0.11379153390987708,
+        0.14792899408284022,
+        -0.11379153390987708,
+        0.14792899408284022
+      ]
+    ],
+    "boundary_vector_bx": [
+      0.0,
+      0.08,
+      0.1152161006390881,
+      0.02876299354751688
+    ],
+    "boundary_vector_by": [
+      0.0,
+      0.0,
+      -0.08111277981007495,
+      0.04089853545281912
+    ],
+    "coefficients_alpha_x": [
+      0.0,
+      0.08,
+      -0.021469745755366795,
+      0.0029785834060860068
+    ],
+    "coefficients_alpha_y": [
+      0.0,
+      0.0,
+      -0.051727001717093865,
+      0.015280026843279448
+    ],
+    "jacobian_J": [
+      [
+        20.0,
+        4.0
+      ],
+      [
+        20.0,
+        -4.0
+      ],
+      [
+        20.0,
+        -4.0
+      ],
+      [
+        20.0,
+        4.0
+      ]
+    ],
+    "motor_params": {
+      "Kv": 0.38,
+      "Ka": 0.06,
+      "r": 0.05,
+      "Lc": 0.2
+    },
+    "equations": {
+      "x_t": "x(t) = +0.0000 +0.0800*t -0.0215*t^2 +0.0030*t^3",
+      "xdot_t": "x_dot(t) = +0.0800 + (-0.0429)*t + (+0.0089)*t^2",
+      "xddot_t": "x_ddot(t) = -0.0429 + (+0.0179)*t",
+      "y_t": "y(t) = +0.0000 +0.0000*t -0.0517*t^2 +0.0153*t^3",
+      "ydot_t": "y_dot(t) = +0.0000 + (-0.1035)*t + (+0.0458)*t^2",
+      "yddot_t": "y_ddot(t) = -0.1035 + (+0.0917)*t",
+      "speed_v_t": "v(t) = sqrt(x_dot(t)^2 + y_dot(t)^2)",
+      "omega_wz_t": "omega(t) = (x_dot*y_ddot - y_dot*x_ddot) / (x_dot^2 + y_dot^2)",
+      "motor_voltage_V_i": "V_i(t) = 0.380 * omega_i(t) + 0.060 * (d_omega_i / dt)"
+    }
+  }
+}

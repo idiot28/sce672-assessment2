@@ -1,23 +1,10 @@
 #!/usr/bin/env python3
 """
-mission_node.py - Live-Tunable ROS 2 Mission Node with Continuous Path Replanning (v4)
-======================================================================================
-Fixes & Features:
-  1. Continuous Receding-Horizon 2D Flat Cubic Replanning:
-     - Re-solves `plan_aligning_cubic_path` on EVERY 20 Hz control tick during CHASING
-       using live camera pose + 2D world tag memory `(tx, ty)` so the robot continuously
-       readjusts its path toward the tag and never follows a stale path blindly.
-     - If the tag drifts off-center (> 28 deg) or leaves camera view (> 0.65 s),
-       immediately pauses forward motion (vx = 0) and re-aligns in place.
-  2. Accurate Dual Front ToF Auto-Discovery & Triple-Redundant 20 cm Stop:
-     - Subscribes to DDS sensors before starting H.264 video stream (and auto-resubscribes
-       if needed) so ToF channels never drop.
-     - Rejects the static arm-blocked ToF channel and selects the closest unblocked
-       straight ToF channel.
-     - Stops at 20 cm when ANY of (Camera Tag Distance, Unblocked Straight ToF, or 2D
-       World Tag Memory Distance) reaches `<= standoff_m` (0.20 m), preventing the bot
-       from ever pushing through the tag.
-  3. Strictly Nonholonomic Motion: `vy = 0.0` at all times (forward, backward, turning only).
+mission_node.py - ROS 2 Differential Flatness Navigation and AprilTag Pursuit Node
+==================================================================================
+Autonomous unicycle trajectory tracking under differential flatness parameterization.
+Executes visual servoing, continuous receding-horizon cubic flatness pursuit,
+and nonholonomic velocity profiling (v_y = 0.0 m/s) with real-time motor voltage telemetry.
 """
 
 import os
@@ -56,8 +43,7 @@ from rm_flatness_nav.vision_tof import (
 
 
 class DropOldestQueue(queue.Queue):
-    """Single-slot FIFO queue that immediately replaces stale frames upon arrival of a new frame.
-    Guarantees 0 ms internal buffer latency and prevents H.264 stream lag in ROS 2."""
+    """Single-slot FIFO queue for zero-latency frame buffer management."""
     def put(self, item, block=True, timeout=None):
         with self.mutex:
             while self._qsize() >= self.maxsize:
@@ -71,7 +57,7 @@ class DropOldestQueue(queue.Queue):
 
 
 def patch_robomaster_sdk(conn_type: str):
-    """Applies RoboMaster SDK Python 3.10+ compatibility patches & WSL2 interface auto-recovery."""
+    """Configures RoboMaster SDK network parameters and media streaming queue."""
     try:
         import robomaster.config
         import robomaster.conn
@@ -259,7 +245,7 @@ class FlatnessMissionNode(Node):
         self.continuous_rows = []
         self.last_logged_sec = -1
 
-        # Do NOT pre-compute a fake path before discovering the target tag
+        # Initialize planned path points (populated upon target tag detection)
         self.planned_path_pts = []
 
         self._init_hardware_or_sim()
@@ -1085,22 +1071,6 @@ class FlatnessMissionNode(Node):
                 wz_cmd = float(np.clip(self.kp_bearing * bearing, -w_lim, w_lim))
                 if abs(bearing) > 0.03 and abs(wz_cmd) < w_min:
                     wz_cmd = math.copysign(w_min, bearing)
-
-                # Smoothly scale forward speed by cos(bearing) so the robot curves continuously
-                cos_scale = max(0.25, math.cos(1.3 * bearing))
-                vx_target = min(self.v_max, (0.45 * v_ff + 0.55 * max(0.0, dist_err)) * cos_scale)
-                if dist_err < 0.12:
-                    vx_cmd = float(np.clip(vx_target, 0.04, 0.08))
-                elif dist_err < 0.30:
-                    vx_cmd = float(np.clip(vx_target, self.v_min, min(self.v_max, 0.16)))
-                else:
-                    vx_cmd = float(np.clip(vx_target, self.v_min, self.v_max))
-
-                # Steer along the planned curving path: combines differential flatness feedforward w_ff,
-                # tangent tracking along the curve, and visual alignment to the tag normal.
-                eff_wz_max = float(self.chase_wz_max)
-                steer_cmd = w_ff + 1.25 * cubic_heading + 0.35 * (bearing - skew)
-                wz_cmd = float(np.clip(steer_cmd, -eff_wz_max, eff_wz_max))
 
         # ---------------------------------------------------------------------
         # 4. FINE_ALIGN: Reverse-and-Forward Nonholonomic Parking Maneuver

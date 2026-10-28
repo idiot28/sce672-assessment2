@@ -3,7 +3,7 @@
 <package format="3">
   <name>rm_flatness_nav</name>
   <version>4.0.0</version>
-  <description>SCE 672 Assessment 2 (v4): 360 Sweep, Dual ToF Auto-Discovery, Nonholonomic Cubic Flatness Pursuit &amp; Motor Voltage Logging</description>
+  <description>SCE 672 Assessment 2: Nonholonomic Cubic Flatness Pursuit and Motor Voltage Telemetry</description>
   <maintainer email="raian@kfupm.edu.sa">Raian E Rabbani</maintainer>
   <license>MIT</license>
 

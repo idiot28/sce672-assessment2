@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-flatness_math.py - Differential Flatness & Motor Voltage Equations (Assessment 2 - v4)
-======================================================================================
-Directly implements all equations from the SCE 672 Assessment 2 Instructions:
-  - Eq. (1): Differential Flatness Inversion (v(t), omega(t))
-  - Eq. (2): Cubic Polynomial Boundary Value Matrix Solver (solve_flat_polynomial)
-  - Eq. (3): Dynamic Time Horizon Scaling (compute_time_horizon)
-  - Eq. (4): Nonholonomic Wheel Kinematics (no strafe vy=0; only vx and wz)
-  - Eq. (5): Motor Armature Voltage Model (Back-EMF Kv + Inertia Ka)
+flatness_math.py - Differential Flatness & Motor Dynamics for Nonholonomic Unicycle
+====================================================================================
+Implements analytical trajectory planning under differential flatness:
+  - Eq. (1): Differential Flatness Inversion for Forward Speed v(t) & Yaw Rate omega(t)
+  - Eq. (2): 4x4 Linear Boundary Value System Solver for C^2 Cubic Polynomials
+  - Eq. (3): Dynamic Execution Horizon Scaling T(d0)
+  - Eq. (4): Mecanum Nonholonomic Inverse Kinematics Mapping (v_y = 0.0 m/s)
+  - Eq. (5): Motor Armature Terminal Voltage Model with Back-EMF & Inertial Compensation
 """
 
 import math
@@ -397,7 +397,6 @@ def plan_aligning_cubic_path(
     # End   (t=T): x(T)=xf, y(T)=yf, arriving aligned with arrival_heading tangent: xdot(T)=zdotf_x, ydot(T)=zdotf_y
     alpha_x = solve_flat_polynomial(0.0, v0, xf, zdotf_x, T)
     alpha_y = solve_flat_polynomial(0.0, 0.0, yf, zdotf_y, T)
-    return alpha_x, alpha_y, T, xf, yf
     return alpha_x, alpha_y, T, xf, yf
 
 
