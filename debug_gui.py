@@ -633,7 +633,9 @@ class DebugApp:
         # Update Live Camera Frame
         if os.path.exists(IMG_PATH):
             try:
-                pil_img = Image.open(IMG_PATH).resize((380, 214))
+                pil_img = Image.open(IMG_PATH)
+                if pil_img.size != (380, 214):
+                    pil_img = pil_img.resize((380, 214))
                 self._tk_cam_img = ImageTk.PhotoImage(pil_img)
                 self.cam_label.configure(image=self._tk_cam_img)
             except Exception:
@@ -733,7 +735,7 @@ class DebugApp:
             except Exception:
                 pass
 
-        self.root.after(80, self._update_loop)
+        self.root.after(25, self._update_loop)
 
 
 class WebHandler(BaseHTTPRequestHandler):

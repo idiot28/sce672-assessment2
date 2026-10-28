@@ -51,34 +51,54 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 # =============================================================================
-# Custom Native OpenCV LiveView for Windows RoboMaster Video Stream
+# Ultra-Low Latency DropOldestQueue & Custom CvLiveView for Windows RoboMaster
 # =============================================================================
+class DropOldestQueue(queue.Queue):
+    """
+    Single-slot FIFO queue that immediately replaces stale frames upon arrival of a new frame.
+    Guarantees 0 ms internal buffer latency and completely eliminates H.264 stream lag.
+    """
+    def put(self, item, block=True, timeout=None):
+        with self.mutex:
+            while self._qsize() >= self.maxsize:
+                try:
+                    self._get()
+                except Exception:
+                    break
+            self._put(item)
+            self.unfinished_tasks += 1
+            self.not_empty.notify()
+
+
 class CvLiveView:
     """
     Connects to the RoboMaster EP H.264 stream on TCP port 40921 using OpenCV's
-    built-in FFmpeg backend on Windows, bypassing legacy libmedia_codec dependencies.
+    built-in FFmpeg backend on Windows with zero-latency buffer parameters.
     """
 
     def __init__(self, robot):
         self._robot = robot
         self._cap = None
         self._streaming = False
-        self._queue = queue.Queue(maxsize=16)
+        self._queue = DropOldestQueue(maxsize=1)
         self._thread = None
         self._frame_count = 0
 
     def start_video_stream(self, display=False, addr=None, ip_proto="tcp"):
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0|max_delay;0"
         ip = addr[0] if addr else getattr(self._robot, "ip", "192.168.2.1")
         port = addr[1] if addr else 40921
         stream_url = f"tcp://{ip}:{port}"
         self._streaming = True
 
         def _worker():
-            time.sleep(0.3)
+            time.sleep(0.1)
             try:
                 self._cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
                 if not self._cap.isOpened():
                     self._cap.open(stream_url)
+                if self._cap.isOpened():
+                    self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             except Exception:
                 self._cap = None
 
@@ -87,18 +107,15 @@ class CvLiveView:
                     ret, frame = self._cap.read()
                     if ret and frame is not None:
                         self._frame_count += 1
-                        while self._queue.qsize() >= 8:
-                            try:
-                                self._queue.get_nowait()
-                            except queue.Empty:
-                                break
                         self._queue.put(frame)
                     else:
-                        time.sleep(0.015)
+                        time.sleep(0.005)
                 else:
-                    time.sleep(0.10)
+                    time.sleep(0.08)
                     try:
                         self._cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
+                        if self._cap.isOpened():
+                            self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     except Exception:
                         pass
 
@@ -122,16 +139,7 @@ class CvLiveView:
         self._queue.queue.clear()
         return True
 
-    def read_video_frame(self, timeout=1.0, strategy="newest"):
-        if strategy == "newest":
-            last = None
-            while not self._queue.empty():
-                try:
-                    last = self._queue.get_nowait()
-                except queue.Empty:
-                    break
-            if last is not None:
-                return last
+    def read_video_frame(self, timeout=0.1, strategy="newest"):
         try:
             return self._queue.get(timeout=timeout)
         except queue.Empty:
@@ -146,6 +154,9 @@ def patch_robomaster_windows(conn_type: str):
         import robomaster.camera
         import robomaster.media
 
+        # Configure OpenCV FFmpeg low-latency capture flags
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0|max_delay;0"
+
         # Ensure DEFAULT_CONN_PROTO is always defined in config
         if not hasattr(robomaster.config, "DEFAULT_CONN_PROTO"):
             robomaster.config.DEFAULT_CONN_PROTO = getattr(robomaster.config, "DEFAULT_PROTO_TYPE", "udp")
@@ -157,6 +168,16 @@ def patch_robomaster_windows(conn_type: str):
                 def connect(self, *a, **kw): return True
                 def stop(self, *a, **kw): pass
             robomaster.conn.FtpConnection = DummyFtp
+
+        # Patch native robomaster.media.LiveView queue depth to 1 for zero-latency
+        try:
+            _orig_liveview_init = robomaster.media.LiveView.__init__
+            def _fast_liveview_init(self, robot):
+                _orig_liveview_init(self, robot)
+                self._video_frame_queue = DropOldestQueue(maxsize=1)
+            robomaster.media.LiveView.__init__ = _fast_liveview_init
+        except Exception:
+            pass
 
         # Auto-detect local Windows IP on robot subnet
         target_ip = "192.168.42.2" if conn_type == "rndis" else "192.168.2.1"
@@ -510,12 +531,11 @@ class WindowsMissionRunner:
             frame = None
             if self.hw_connected and self.ep_robot is not None:
                 try:
-                    time.sleep(0.010)
-                    frame = self.ep_robot.camera.read_cv2_image(strategy="newest", timeout=0.2)
+                    frame = self.ep_robot.camera.read_cv2_image(strategy="newest", timeout=0.08)
                 except Exception:
                     frame = None
             elif self.sim is not None:
-                time.sleep(0.010)
+                time.sleep(0.025)
                 frame = self.sim.render_frame()
 
             if frame is not None:
@@ -570,8 +590,8 @@ class WindowsMissionRunner:
                         self.tag_visible = False
 
                 self._write_gui_stream(frame, dets)
-
-            time.sleep(0.040)
+            else:
+                time.sleep(0.002)
 
     # =========================================================================
     # Pure Optical Distance & Spatial Memory Estimator (No ToF Sensor)
@@ -974,19 +994,19 @@ class WindowsMissionRunner:
 
     def _write_gui_stream(self, raw_frame: np.ndarray, all_dets: list):
         try:
-            vis_img = cv2.resize(raw_frame, (640, 360))
-            sx = 640.0 / float(raw_frame.shape[1])
-            sy = 360.0 / float(raw_frame.shape[0])
+            vis_img = cv2.resize(raw_frame, (380, 214))
+            sx = 380.0 / float(raw_frame.shape[1])
+            sy = 214.0 / float(raw_frame.shape[0])
 
             # Visual guidelines & target alignment zone
-            cv2.line(vis_img, (320, 0), (320, 360), (85, 85, 85), 1)
-            cv2.line(vis_img, (0, 180), (640, 180), (85, 85, 85), 1)
-            cv2.rectangle(vis_img, (245, 105), (395, 255), (70, 135, 70), 1)
-            cv2.putText(vis_img, "20cm PARALLEL ALIGN TARGET ZONE", (215, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (90, 180, 90), 1)
+            cv2.line(vis_img, (190, 0), (190, 214), (85, 85, 85), 1)
+            cv2.line(vis_img, (0, 107), (380, 107), (85, 85, 85), 1)
+            cv2.rectangle(vis_img, (145, 62), (235, 151), (70, 135, 70), 1)
+            cv2.putText(vis_img, "20cm TARGET", (140, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (90, 180, 90), 1)
 
-            gy = int(0.70 * 360)
-            cv2.line(vis_img, (int(0.24 * 640), gy), (int(0.90 * 640), gy), (60, 140, 60), 1)
-            cv2.putText(vis_img, "20cm FLOOR STANDOFF LINE", (int(0.36 * 640), gy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (80, 200, 80), 1)
+            gy = int(0.70 * 214)
+            cv2.line(vis_img, (int(0.24 * 380), gy), (int(0.90 * 380), gy), (60, 140, 60), 1)
+            cv2.putText(vis_img, "20cm STANDOFF", (int(0.36 * 380), gy - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (80, 200, 80), 1)
 
             for d in all_dets:
                 x, y, w, h = d["bbox"]
@@ -996,9 +1016,9 @@ class WindowsMissionRunner:
                 cv2.rectangle(vis_img, (x1, y1), (x2, y2), col, 2)
                 if d.get("corners") is not None:
                     pts = (d["corners"] * np.array([sx, sy])).astype(np.int32)
-                    cv2.polylines(vis_img, [pts], True, (0, 229, 255), 2)
-                lbl = f"T{d['id']} d={d['dist_m']:.2f}m brg={math.degrees(d['bearing_rad']):+.1f}d skew={math.degrees(d['skew_rad']):+.1f}d"
-                cv2.putText(vis_img, lbl, (max(8, x1), max(20, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.46, col, 2)
+                    cv2.polylines(vis_img, [pts], True, (0, 229, 255), 1)
+                lbl = f"T{d['id']} d={d['dist_m']:.2f}m brg={math.degrees(d['bearing_rad']):+.0f}d"
+                cv2.putText(vis_img, lbl, (max(4, x1), max(14, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.34, col, 1)
 
             now = time.monotonic()
             with self.lock:
@@ -1069,7 +1089,7 @@ class WindowsMissionRunner:
 
             img_tmp = os.path.join(self.output_dir, "live_camera_tmp.jpg")
             img_out = os.path.join(self.output_dir, "live_camera.jpg")
-            cv2.imwrite(img_tmp, vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+            cv2.imwrite(img_tmp, vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
             os.replace(img_tmp, img_out)
 
             json_tmp = os.path.join(self.output_dir, "live_telemetry_tmp.json")

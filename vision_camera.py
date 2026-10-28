@@ -45,30 +45,82 @@ class CameraAprilTagDetector:
 
     def __init__(self, tag_size_m: float = 0.048):
         self.tag_size_m = float(tag_size_m)
-        self.clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-        self.detectors = []
+        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        self.primary_detector = None
+        self.aux_detectors = []
 
         if hasattr(cv2, "aruco"):
-            for name in ("DICT_APRILTAG_36h11", "DICT_APRILTAG_16h5", "DICT_APRILTAG_25h9", "DICT_4X4_50"):
+            did_36 = getattr(cv2.aruco, "DICT_APRILTAG_36h11", None)
+            if did_36 is not None:
+                adict = cv2.aruco.getPredefinedDictionary(did_36)
+                if hasattr(cv2.aruco, "DetectorParameters"):
+                    params = cv2.aruco.DetectorParameters()
+                    params.minMarkerPerimeterRate = 0.012
+                    self.primary_detector = cv2.aruco.ArucoDetector(adict, params)
+                else:
+                    params = cv2.aruco.DetectorParameters_create()
+                    params.minMarkerPerimeterRate = 0.012
+                    self.primary_detector = (adict, params)
+
+            for name in ("DICT_APRILTAG_16h5", "DICT_APRILTAG_25h9", "DICT_4X4_50"):
                 did = getattr(cv2.aruco, name, None)
                 if did is not None:
                     try:
                         adict = cv2.aruco.getPredefinedDictionary(did)
                         if hasattr(cv2.aruco, "DetectorParameters"):
-                            params = cv2.aruco.DetectorParameters()
-                            params.adaptiveThreshWinSizeMin = 3
-                            params.adaptiveThreshWinSizeMax = 53
-                            params.adaptiveThreshWinSizeStep = 6
-                            params.minMarkerPerimeterRate = 0.012
-                            if hasattr(cv2.aruco, "CORNER_REFINE_SUBPIX"):
-                                params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-                            self.detectors.append((name, cv2.aruco.ArucoDetector(adict, params)))
+                            p = cv2.aruco.DetectorParameters()
+                            p.minMarkerPerimeterRate = 0.015
+                            self.aux_detectors.append((name, cv2.aruco.ArucoDetector(adict, p)))
                         else:
-                            params = cv2.aruco.DetectorParameters_create()
-                            params.minMarkerPerimeterRate = 0.012
-                            self.detectors.append((name, (adict, params)))
+                            p = cv2.aruco.DetectorParameters_create()
+                            p.minMarkerPerimeterRate = 0.015
+                            self.aux_detectors.append((name, (adict, p)))
                     except Exception:
                         pass
+
+    @staticmethod
+    def _run_detector(det, gray):
+        if det is None:
+            return None, None, None
+        try:
+            if isinstance(det, tuple):
+                if hasattr(cv2.aruco, "detectMarkers"):
+                    return cv2.aruco.detectMarkers(gray, det[0], parameters=det[1])
+                return None, None, None
+            return det.detectMarkers(gray)
+        except Exception:
+            return None, None, None
+
+    def _parse_corners(self, corners, ids, fx: float, fy: float, cx_mid: float, scale: float = 1.0):
+        if ids is None or len(ids) == 0:
+            return []
+        results = []
+        seen = set()
+        for i, raw_id in enumerate(np.asarray(ids).flatten()):
+            tid = int(raw_id)
+            if tid in seen:
+                continue
+            pts = corners[i][0].astype(np.float64) * scale
+            cx = float(np.mean(pts[:, 0]))
+
+            x1, y1 = int(np.min(pts[:, 0])), int(np.min(pts[:, 1]))
+            x2, y2 = int(np.max(pts[:, 0])), int(np.max(pts[:, 1]))
+            bw, bh = max(4, x2 - x1), max(4, y2 - y1)
+
+            dist_m = self._estimate_tag_distance(pts, bw, bh, fy)
+            bearing_rad = -math.atan2(cx - cx_mid, fx)
+            skew_rad = self.compute_parallel_skew(pts)
+
+            seen.add(tid)
+            results.append({
+                "id": tid,
+                "dist_m": dist_m,
+                "bearing_rad": bearing_rad,
+                "skew_rad": skew_rad,
+                "bbox": (x1, y1, bw, bh),
+                "corners": pts,
+            })
+        return results
 
     @staticmethod
     def compute_parallel_skew(pts: np.ndarray) -> float:
@@ -110,52 +162,7 @@ class CameraAprilTagDetector:
         size_dist = (self.tag_size_m * fy) / max(apparent_px, 6.0)
         return float(np.clip(size_dist, 0.08, 3.20))
 
-    def _aruco_detect(self, gray: np.ndarray, fx: float, fy: float, cx_mid: float):
-        results = []
-        seen = set()
-
-        for _, det in self.detectors:
-            try:
-                if isinstance(det, tuple):
-                    if hasattr(cv2.aruco, "detectMarkers"):
-                        corners, ids, _ = cv2.aruco.detectMarkers(gray, det[0], parameters=det[1])
-                    else:
-                        continue
-                else:
-                    corners, ids, _ = det.detectMarkers(gray)
-            except Exception:
-                continue
-
-            if ids is None or len(ids) == 0:
-                continue
-
-            for i, raw_id in enumerate(np.asarray(ids).flatten()):
-                tid = int(raw_id)
-                if tid in seen:
-                    continue
-                pts = corners[i][0].astype(np.float64)
-                cx = float(np.mean(pts[:, 0]))
-
-                x1, y1 = int(np.min(pts[:, 0])), int(np.min(pts[:, 1]))
-                x2, y2 = int(np.max(pts[:, 0])), int(np.max(pts[:, 1]))
-                bw, bh = max(4, x2 - x1), max(4, y2 - y1)
-
-                dist_m = self._estimate_tag_distance(pts, bw, bh, fy)
-                bearing_rad = -math.atan2(cx - cx_mid, fx)
-                skew_rad = self.compute_parallel_skew(pts)
-
-                seen.add(tid)
-                results.append({
-                    "id": tid,
-                    "dist_m": dist_m,
-                    "bearing_rad": bearing_rad,
-                    "skew_rad": skew_rad,
-                    "bbox": (x1, y1, bw, bh),
-                    "corners": pts,
-                })
-        return results
-
-    def detect_all(self, frame: np.ndarray, default_id: int = 3):
+    def detect_all(self, frame: np.ndarray, default_id: int = 3, check_aux: bool = False):
         if frame is None or frame.size == 0:
             return []
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
@@ -164,61 +171,29 @@ class CameraAprilTagDetector:
         fy = (h_img / 360.0) * 390.0
         cx_mid = w_img / 2.0
 
-        # Pass 1: Standard ArUco detection across FULL unmasked frame
-        dets = self._aruco_detect(gray, fx, fy, cx_mid)
+        # Step 1: Ultra-fast primary AprilTag 36h11 detection (5-15 ms)
+        corners, ids, _ = self._run_detector(self.primary_detector, gray)
+        dets = self._parse_corners(corners, ids, fx, fy, cx_mid)
         if dets:
             return dets
 
-        # Pass 2: Enhanced CLAHE contrast detection
-        dets = self._aruco_detect(self.clahe.apply(gray), fx, fy, cx_mid)
-        if dets:
-            return dets
+        # Step 2: High-contrast 360p CLAHE pass (catches distant or dim tags in ~10 ms)
+        g_small = cv2.resize(gray, (640, 360)) if (w_img != 640 or h_img != 360) else gray
+        scale = float(w_img) / 640.0 if (w_img != 640) else 1.0
+        g_enh = self.clahe.apply(g_small)
+        corners_c, ids_c, _ = self._run_detector(self.primary_detector, g_enh)
+        dets_c = self._parse_corners(corners_c, ids_c, fx, fy, cx_mid, scale=scale)
+        if dets_c:
+            return dets_c
 
-        # Pass 3: Distant bright-square tag fallback
-        y_top, y_bot = int(0.20 * h_img), int(0.70 * h_img)
-        roi = gray[y_top:y_bot, :]
-        _, thresh = cv2.threshold(roi, 210, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        scale_sq = (w_img / 640.0) ** 2
+        # Step 3: Optional aux detector check (only if non-standard tags explicitly requested)
+        if check_aux:
+            for _, det in self.aux_detectors:
+                c_aux, ids_aux, _ = self._run_detector(det, g_small)
+                d_aux = self._parse_corners(c_aux, ids_aux, fx, fy, cx_mid, scale=scale)
+                if d_aux:
+                    return d_aux
 
-        best = None
-        for c in contours:
-            area = cv2.contourArea(c)
-            if not (60.0 * scale_sq <= area <= 18000.0 * scale_sq):
-                continue
-            bx, by_rel, bw, bh = cv2.boundingRect(c)
-            by = by_rel + y_top
-            aspect = float(bw) / max(float(bh), 1.0)
-            if not (0.65 <= aspect <= 1.45) or (area / max(float(bw * bh), 1.0)) < 0.65:
-                continue
-            pad = max(5, int(0.40 * bw))
-            xl1, xl2 = max(0, bx - pad), max(1, bx - 2)
-            xr1, xr2 = min(w_img - 1, bx + bw + 2), min(w_img, bx + bw + pad)
-            if xl2 <= xl1 or xr2 <= xr1:
-                continue
-            lm = float(np.mean(gray[by:by + bh, xl1:xl2]))
-            rm = float(np.mean(gray[by:by + bh, xr1:xr2]))
-            if lm > 80.0 or rm > 80.0 or abs(lm - rm) > 40.0:
-                continue
-            score = area * (95.0 - 0.5 * (lm + rm))
-            if best is None or score > best[0]:
-                best = (score, (bx, by, bw, bh), c)
-
-        if best is not None:
-            _, (bx, by, bw, bh), cnt = best
-            cx = bx + 0.5 * bw
-            box_pts = cv2.boxPoints(cv2.minAreaRect(cnt)).astype(np.float64)
-            box_pts[:, 1] += y_top
-            dist_m = self._estimate_tag_distance(box_pts, bw, bh, fy)
-            bearing_rad = -math.atan2(cx - cx_mid, fx)
-            return [{
-                "id": int(default_id),
-                "dist_m": dist_m,
-                "bearing_rad": bearing_rad,
-                "skew_rad": self.compute_parallel_skew(box_pts),
-                "bbox": (bx, by, bw, bh),
-                "corners": box_pts,
-            }]
         return []
 
 

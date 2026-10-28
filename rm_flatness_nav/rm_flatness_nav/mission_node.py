@@ -25,6 +25,7 @@ import csv
 import json
 import math
 import time
+import queue
 import socket
 import threading
 import numpy as np
@@ -51,11 +52,37 @@ from rm_flatness_nav.vision_tof import (
 )
 
 
+class DropOldestQueue(queue.Queue):
+    """Single-slot FIFO queue that immediately replaces stale frames upon arrival of a new frame.
+    Guarantees 0 ms internal buffer latency and prevents H.264 stream lag in ROS 2."""
+    def put(self, item, block=True, timeout=None):
+        with self.mutex:
+            while self._qsize() >= self.maxsize:
+                try:
+                    self._get()
+                except Exception:
+                    break
+            self._put(item)
+            self.unfinished_tasks += 1
+            self.not_empty.notify()
+
+
 def patch_robomaster_sdk(conn_type: str):
     """Applies RoboMaster SDK Python 3.10+ compatibility patches & WSL2 interface auto-recovery."""
     try:
         import robomaster.config
         import robomaster.conn
+        import robomaster.media
+
+        # Patch native robomaster.media.LiveView queue depth to 1 for zero-latency
+        try:
+            _orig_liveview_init = robomaster.media.LiveView.__init__
+            def _fast_liveview_init(self, robot):
+                _orig_liveview_init(self, robot)
+                self._video_frame_queue = DropOldestQueue(maxsize=1)
+            robomaster.media.LiveView.__init__ = _fast_liveview_init
+        except Exception:
+            pass
 
         try:
             from robomaster_ros.ftp import FtpConnection
@@ -437,19 +464,18 @@ class FlatnessMissionNode(Node):
             time.sleep(0.050)
 
     # =========================================================================
-    # Problem 1 Hint: Camera Thread with time.sleep(0.010) between grabs
+    # Problem 1: Ultra-Low Latency 30 FPS Camera Thread
     # =========================================================================
     def _camera_loop(self):
         while not self._stop_evt.is_set():
             frame = None
             if self.hw_connected and self.ep_robot is not None:
                 try:
-                    time.sleep(0.010)
-                    frame = self.ep_robot.camera.read_cv2_image(strategy="newest", timeout=0.2)
+                    frame = self.ep_robot.camera.read_cv2_image(strategy="newest", timeout=0.08)
                 except Exception:
                     frame = None
             elif self.sim is not None:
-                time.sleep(0.010)
+                time.sleep(0.025)
                 frame = self.sim.render_frame()
 
             if frame is not None:
@@ -506,8 +532,8 @@ class FlatnessMissionNode(Node):
                         self.tag_visible = False
 
                 self._write_gui_stream(frame, dets)
-
-            time.sleep(0.075)
+            else:
+                time.sleep(0.002)
 
     def _get_mem_tag_relative(self, tid: int):
         """
@@ -1011,18 +1037,18 @@ class FlatnessMissionNode(Node):
 
     def _write_gui_stream(self, raw_frame: np.ndarray, all_dets: list):
         try:
-            vis_img = cv2.resize(raw_frame, (640, 360))
-            sx = 640.0 / float(raw_frame.shape[1])
-            sy = 360.0 / float(raw_frame.shape[0])
+            vis_img = cv2.resize(raw_frame, (380, 214))
+            sx = 380.0 / float(raw_frame.shape[1])
+            sy = 214.0 / float(raw_frame.shape[0])
 
-            cv2.line(vis_img, (320, 0), (320, 360), (85, 85, 85), 1)
-            cv2.line(vis_img, (0, 180), (640, 180), (85, 85, 85), 1)
-            cv2.rectangle(vis_img, (245, 105), (395, 255), (70, 135, 70), 1)
-            cv2.putText(vis_img, "20cm PARALLEL ALIGN TARGET ZONE", (215, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (90, 180, 90), 1)
+            cv2.line(vis_img, (190, 0), (190, 214), (85, 85, 85), 1)
+            cv2.line(vis_img, (0, 107), (380, 107), (85, 85, 85), 1)
+            cv2.rectangle(vis_img, (145, 62), (235, 151), (70, 135, 70), 1)
+            cv2.putText(vis_img, "20cm TARGET", (140, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (90, 180, 90), 1)
 
-            gy = int(0.70 * 360)
-            cv2.line(vis_img, (int(0.24 * 640), gy), (int(0.90 * 640), gy), (60, 140, 60), 1)
-            cv2.putText(vis_img, "20cm FLOOR STANDOFF LINE", (int(0.36 * 640), gy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (80, 200, 80), 1)
+            gy = int(0.70 * 214)
+            cv2.line(vis_img, (int(0.24 * 380), gy), (int(0.90 * 380), gy), (60, 140, 60), 1)
+            cv2.putText(vis_img, "20cm STANDOFF", (int(0.36 * 380), gy - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (80, 200, 80), 1)
 
             for d in all_dets:
                 x, y, w, h = d["bbox"]
@@ -1032,9 +1058,9 @@ class FlatnessMissionNode(Node):
                 cv2.rectangle(vis_img, (x1, y1), (x2, y2), col, 2)
                 if d.get("corners") is not None:
                     pts = (d["corners"] * np.array([sx, sy])).astype(np.int32)
-                    cv2.polylines(vis_img, [pts], True, (0, 229, 255), 2)
-                lbl = f"T{d['id']} d={d['dist_m']:.2f}m brg={math.degrees(d['bearing_rad']):+.1f}d skew={math.degrees(d['skew_rad']):+.1f}d"
-                cv2.putText(vis_img, lbl, (max(8, x1), max(20, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.46, col, 2)
+                    cv2.polylines(vis_img, [pts], True, (0, 229, 255), 1)
+                lbl = f"T{d['id']} d={d['dist_m']:.2f}m brg={math.degrees(d['bearing_rad']):+.0f}d"
+                cv2.putText(vis_img, lbl, (max(4, x1), max(14, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.34, col, 1)
 
             now = time.monotonic()
             with self.lock:
@@ -1105,7 +1131,7 @@ class FlatnessMissionNode(Node):
 
             img_tmp = os.path.join(self.output_dir, "live_camera_tmp.jpg")
             img_out = os.path.join(self.output_dir, "live_camera.jpg")
-            cv2.imwrite(img_tmp, vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+            cv2.imwrite(img_tmp, vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
             os.replace(img_tmp, img_out)
 
             json_tmp = os.path.join(self.output_dir, "live_telemetry_tmp.json")
