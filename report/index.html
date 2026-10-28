@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCE 672: Advanced Robotics - Assessment 2 Presentation</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- KaTeX CSS & JS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}]});"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        code, pre { font-family: 'Fira Code', monospace; }
+        .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); }
+        .tab-btn.active { border-bottom: 3px solid #2563eb; color: #1d4ed8; font-weight: 600; }
+        @media print {
+            .no-print { display: none !important; }
+            .section-page { page-break-after: always; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+    <!-- Top Academic Header -->
+    <header class="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white py-6 px-4 shadow-lg border-b border-indigo-500/20">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <div class="flex items-center gap-2 text-indigo-400 text-sm font-semibold tracking-wider uppercase">
+                    <span>KFUPM</span> &bull; <span>Department of Systems & Control Engineering</span>
+                </div>
+                <h1 class="text-2xl md:text-3xl font-bold mt-1 text-white tracking-tight">
+                    Assessment 2: Autonomous Flatness Pursuit & Hardware Telemetry
+                </h1>
+                <p class="text-sm text-slate-300 mt-1">
+                    SCE 672: Advanced Robotics &bull; Instructor: <strong class="text-indigo-200">Prof. Aamer Iqbal Bhatti</strong>
+                </p>
+            </div>
+            <div class="bg-white/10 backdrop-blur-md px-4 py-3 rounded-xl border border-white/15 text-xs text-right">
+                <div>Student: <span class="font-bold text-white">Raian E Rabbani</span></div>
+                <div>ID: <span class="font-mono text-indigo-300">202617880</span></div>
+                <div>Target: <span class="font-semibold text-emerald-400">AprilTag T₃ (1.50 m)</span></div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Navigation Bar for the 5 Presentation Points -->
+    <nav class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm no-print">
+        <div class="max-w-6xl mx-auto flex overflow-x-auto text-sm font-medium text-slate-600">
+            <button onclick="switchTab('point1')" id="tab-point1" class="tab-btn active px-5 py-3 hover:text-blue-600 whitespace-nowrap transition-colors">
+                1. Path Planned (GitHub Code)
+            </button>
+            <button onclick="switchTab('point2')" id="tab-point2" class="tab-btn px-5 py-3 hover:text-blue-600 whitespace-nowrap transition-colors">
+                2. Commanded to RoboMaster
+            </button>
+            <button onclick="switchTab('point3')" id="tab-point3" class="tab-btn px-5 py-3 hover:text-blue-600 whitespace-nowrap transition-colors">
+                3. Reference Graphs ($x$ & $v_x$)
+            </button>
+            <button onclick="switchTab('point4')" id="tab-point4" class="tab-btn px-5 py-3 hover:text-blue-600 whitespace-nowrap transition-colors">
+                4. Tracking Errors
+            </button>
+            <button onclick="switchTab('point5')" id="tab-point5" class="tab-btn px-5 py-3 hover:text-blue-600 whitespace-nowrap transition-colors">
+                5. YouTube Video
+            </button>
+            <div class="ml-auto flex items-center pr-4 gap-2">
+                <a href="Raian_SCE672_Assessment2.pdf" target="_blank" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium shadow-sm flex items-center gap-1 transition-colors">
+                    📄 View PDF Report
+                </a>
+                <a href="https://github.com/idiot28/sce672-assessment2" target="_blank" class="text-xs bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg font-medium shadow-sm flex items-center gap-1 transition-colors">
+                    GitHub Repo
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="max-w-6xl mx-auto px-4 py-8 flex-1 w-full">
+
+        <!-- ================================================================== -->
+        <!-- POINT 1: PATH PLANNED FROM GITHUB CODE                             -->
+        <!-- ================================================================== -->
+        <section id="point1" class="section-content space-y-6">
+            <div class="border-b border-slate-200 pb-4 flex justify-between items-center">
+                <div>
+                    <span class="text-xs font-bold text-blue-600 uppercase tracking-widest">Presentation Focus #1</span>
+                    <h2 class="text-2xl font-bold text-slate-900 mt-1">Path Planned Directly from GitHub Code</h2>
+                </div>
+                <a href="https://github.com/idiot28/sce672-assessment2/blob/main/src/flatness_math.py" target="_blank" class="text-xs font-mono bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg flex items-center gap-1">
+                    src/flatness_math.py ↗
+                </a>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Mathematical Derivation -->
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                    <h3 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                        Differential Flatness Formulation
+                    </h3>
+                    <p class="text-sm text-slate-600 leading-relaxed">
+                        For a unicycle robot in $SE(2)$ governed by $\dot{x} = v\cos\theta, \dot{y} = v\sin\theta, \dot{\theta} = \omega$, the 2D position vector $\mathbf{z}(t) = [x(t), y(t)]^T$ is a <strong>flat output</strong>. The control velocities are retrieved purely algebraically:
+                    </p>
+                    <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 text-sm overflow-x-auto">
+                        $$v(t) = \sqrt{\dot{x}(t)^2 + \dot{y}(t)^2}, \qquad \omega(t) = \frac{\dot{x}(t)\ddot{y}(t) - \dot{y}(t)\ddot{x}(t)}{\dot{x}(t)^2 + \dot{y}(t)^2}$$
+                    </div>
+                    <p class="text-sm text-slate-600 leading-relaxed">
+                        Parameterizing each coordinate as a cubic polynomial $z_j(t) = \sum_{k=0}^3 \alpha_k^{[j]} t^k$ over horizon $T$ yields the linear boundary value problem:
+                    </p>
+                    <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs overflow-x-auto">
+                        $$\begin{bmatrix} 1 & 0 & 0 & 0 \\ 0 & 1 & 0 & 0 \\ 1 & T & T^2 & T^3 \\ 0 & 1 & 2T & 3T^2 \end{bmatrix} \begin{bmatrix} \alpha_0 \\ \alpha_1 \\ \alpha_2 \\ \alpha_3 \end{bmatrix} = \begin{bmatrix} z(0) \\ \dot{z}(0) \\ z(T) \\ \dot{z}(T) \end{bmatrix}$$
+                    </div>
+                </div>
+
+                <!-- Solved Equations for AprilTag 3 -->
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                    <h3 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
+                        Solved Boundary Conditions (Tag $T_3$)
+                    </h3>
+                    <div class="text-xs bg-emerald-50 text-emerald-800 p-3 rounded-xl border border-emerald-200">
+                        <strong>Target Distance:</strong> $d_0 = 1.50\text{ m}$ &bull; <strong>Standoff:</strong> $0.20\text{ m}$ &bull; <strong>Execution Horizon:</strong> $T = 13.00\text{ s}$<br>
+                        <strong>Boundary:</strong> $x(0) = 0.0\text{ m}, \dot{x}(0) = 0.060\text{ m/s}, x(T) = 1.30\text{ m}, \dot{x}(T) = 0.00\text{ m/s}$
+                    </div>
+                    <div class="space-y-2">
+                        <div class="text-xs font-semibold text-slate-500 uppercase">Exact Analytical Polynomials Tracked:</div>
+                        <div class="p-3 bg-slate-900 text-white rounded-xl text-xs font-mono space-y-1.5 shadow-inner">
+                            <div class="text-emerald-400 font-semibold">// Longitudinal Position Ref:</div>
+                            <div>x_ref(t) = 0.060000*t + 0.013846*t² - 0.0008284*t³</div>
+                            <div class="text-blue-400 font-semibold pt-1">// Forward Linear Velocity Ref:</div>
+                            <div>v_ref(t) = 0.060000 + 0.027692*t - 0.002485*t²</div>
+                            <div class="text-amber-400 font-semibold pt-1">// Lateral & Heading Ref:</div>
+                            <div>y_ref(t) = 0.000 m,  w_ref(t) = 0.000 rad/s</div>
+                        </div>
+                    </div>
+                    <p class="text-xs text-slate-500">
+                        Peak velocity $v^* = 0.137\text{ m/s}$ occurs at $t^* = 5.57\text{ s}$, safely under the maximum threshold $v_{\max} = 0.160\text{ m/s}$.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Python Source Code Listing from GitHub -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="bg-slate-900 px-6 py-3.5 flex justify-between items-center text-xs">
+                    <span class="text-slate-300 font-mono flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-yellow-500 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-green-500 inline-block"></span>
+                        <span class="ml-2 text-slate-200 font-semibold">GitHub Source: src/flatness_math.py</span>
+                    </span>
+                    <a href="https://github.com/idiot28/sce672-assessment2/blob/main/src/flatness_math.py" target="_blank" class="text-blue-400 hover:text-blue-300 transition-colors">
+                        View on GitHub ↗
+                    </a>
+                </div>
+                <pre class="p-6 text-xs bg-slate-950 text-slate-200 overflow-x-auto leading-relaxed"><code><span class="text-slate-500"># Direct excerpt from GitHub repository: src/flatness_math.py</span>
+<span class="text-purple-400">def</span> <span class="text-blue-400">solve_flat_polynomial</span>(z0: <span class="text-emerald-400">float</span>, zdot0: <span class="text-emerald-400">float</span>, zf: <span class="text-emerald-400">float</span>, zdotf: <span class="text-emerald-400">float</span>, T: <span class="text-emerald-400">float</span>):
+    <span class="text-slate-500">"""
+    Solves the boundary value problem for a single coordinate using a cubic polynomial:
+    z(t) = alpha_0 + alpha_1 * t + alpha_2 * t^2 + alpha_3 * t^3
+    Boundary Conditions:
+      z(0) = z0,  z_dot(0) = zdot0,  z(T) = zf,  z_dot(T) = zdotf
+    """</span>
+    M = np.array([
+        [<span class="text-amber-300">1.0</span>, <span class="text-amber-300">0.0</span>, <span class="text-amber-300">0.0</span>,     <span class="text-amber-300">0.0</span>],
+        [<span class="text-amber-300">0.0</span>, <span class="text-amber-300">1.0</span>, <span class="text-amber-300">0.0</span>,     <span class="text-amber-300">0.0</span>],
+        [<span class="text-amber-300">1.0</span>, T,   T**<span class="text-amber-300">2</span>,    T**<span class="text-amber-300">3</span>],
+        [<span class="text-amber-300">0.0</span>, <span class="text-amber-300">1.0</span>, <span class="text-amber-300">2.0</span> * T, <span class="text-amber-300">3.0</span> * (T**<span class="text-amber-300">2</span>)]
+    ], dtype=np.float64)
+    b = np.array([z0, zdot0, zf, zdotf], dtype=np.float64)
+    <span class="text-purple-400">return</span> np.linalg.solve(M, b)  <span class="text-slate-500"># returns [alpha_0, alpha_1, alpha_2, alpha_3]</span></code></pre>
+            </div>
+        </section>
+
+        <!-- ================================================================== -->
+        <!-- POINT 2: WHERE IT IS COMMANDED TO ROBOMASTER                       -->
+        <!-- ================================================================== -->
+        <section id="point2" class="section-content space-y-6 hidden">
+            <div class="border-b border-slate-200 pb-4 flex justify-between items-center">
+                <div>
+                    <span class="text-xs font-bold text-indigo-600 uppercase tracking-widest">Presentation Focus #2</span>
+                    <h2 class="text-2xl font-bold text-slate-900 mt-1">Where and How It Is Being Commanded to RoboMaster</h2>
+                </div>
+                <div class="flex gap-2">
+                    <a href="https://github.com/idiot28/sce672-assessment2/blob/main/ros2/rm_flatness_nav/rm_flatness_nav/mission_node.py" target="_blank" class="text-xs font-mono bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-3 py-1.5 rounded-lg">
+                        mission_node.py ↗
+                    </a>
+                    <a href="https://github.com/idiot28/sce672-assessment2/blob/main/src/mission_runner_win.py" target="_blank" class="text-xs font-mono bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-3 py-1.5 rounded-lg">
+                        mission_runner_win.py ↗
+                    </a>
+                </div>
+            </div>
+
+            <!-- Architecture Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                    <div class="text-xs font-bold text-blue-600 uppercase tracking-wider">1. High-Level Planner</div>
+                    <div class="text-base font-semibold text-slate-900 mt-1">Flatness Generator</div>
+                    <p class="text-xs text-slate-600 mt-2">
+                        Computes $v_x(t) = \dot{x}_{\text{ref}}(t)$ and $\omega_z(t)$ at 20 Hz in <code class="text-indigo-600">src/flatness_math.py</code>.
+                    </p>
+                </div>
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                    <div class="text-xs font-bold text-indigo-600 uppercase tracking-wider">2. ROS 2 Node</div>
+                    <div class="text-base font-semibold text-slate-900 mt-1">/cmd_vel Publisher</div>
+                    <p class="text-xs text-slate-600 mt-2">
+                        Publishes <code class="text-indigo-600">geometry_msgs/Twist</code> with <strong class="text-red-600">linear.y = 0.0</strong> strictly enforcing nonholonomic drive.
+                    </p>
+                </div>
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                    <div class="text-xs font-bold text-emerald-600 uppercase tracking-wider">3. Hardware SDK Call</div>
+                    <div class="text-base font-semibold text-slate-900 mt-1">Chassis Actuator Loop</div>
+                    <p class="text-xs text-slate-600 mt-2">
+                        Calls <code class="text-indigo-600">chassis.drive_speed()</code> at 20 Hz, mapping yaw rate to deg/s and activating electrical brakes at 20 cm.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Code Execution Snippet -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="bg-slate-900 px-6 py-3.5 flex justify-between items-center text-xs">
+                    <span class="text-slate-300 font-mono font-semibold">Exact Actuation Call in src/mission_runner_win.py (Lines 142-148)</span>
+                    <span class="text-xs text-emerald-400 font-mono">20 Hz Actuation Loop</span>
+                </div>
+                <pre class="p-6 text-xs bg-slate-950 text-slate-200 overflow-x-auto leading-relaxed"><code><span class="text-slate-500"># Inside _chassis_actuator_loop(self):</span>
+<span class="text-purple-400">with</span> self._cmd_lock:
+    vx_cmd = self._cmd_vx
+    wz_cmd = self._cmd_wz
+
+<span class="text-slate-500"># Convert yaw rate from rad/s to SDK's expected deg/s (negative convention):</span>
+yaw_rate_deg_s = -<span class="text-emerald-400">float</span>(wz_cmd) * (<span class="text-amber-300">180.0</span> / math.pi)
+
+<span class="text-slate-500"># DIRECT HARDWARE DISPATCH: y=0.0 enforces nonholonomic unicycle operation!</span>
+<span class="text-cyan-400">self</span>.ep_robot.chassis.drive_speed(x=<span class="text-emerald-400">float</span>(vx_cmd), <span class="text-red-400 font-bold">y=0.0</span>, z=yaw_rate_deg_s)</code></pre>
+            </div>
+
+            <!-- State Machine Commands Table -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+                    <h3 class="text-base font-semibold text-slate-900">Hardware Commands Dispatched Across Operational States</h3>
+                    <span class="text-xs font-mono bg-slate-100 text-slate-600 px-2.5 py-1 rounded-md">Table 1 Summary</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs text-slate-600">
+                        <thead class="bg-slate-50 text-slate-700 uppercase font-semibold border-b border-slate-200">
+                            <tr>
+                                <th class="px-5 py-3.5">Mission State</th>
+                                <th class="px-5 py-3.5">Hardware SDK Call Executed</th>
+                                <th class="px-5 py-3.5">Payload & Physical Purpose</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <tr class="hover:bg-slate-50/50">
+                                <td class="px-5 py-3 font-mono font-semibold text-slate-800">INITIALIZATION</td>
+                                <td class="px-5 py-3 font-mono text-indigo-600">robotic_arm.moveto(x=140, y=35)</td>
+                                <td class="px-5 py-3">Pitches FPV camera down by $-22^\circ$; clears claws completely from FOV.</td>
+                            </tr>
+                            <tr class="hover:bg-slate-50/50">
+                                <td class="px-5 py-3 font-mono font-semibold text-slate-800">SEARCHING</td>
+                                <td class="px-5 py-3 font-mono text-indigo-600">chassis.drive_speed(x=0, y=0, z=&plusmn;17.2)</td>
+                                <td class="px-5 py-3">In-place sweep at $\pm 0.30\text{ rad/s}$ toward target bearing until tag is visible.</td>
+                            </tr>
+                            <tr class="hover:bg-slate-50/50">
+                                <td class="px-5 py-3 font-mono font-semibold text-slate-800">ALIGNING</td>
+                                <td class="px-5 py-3 font-mono text-indigo-600">chassis.drive_speed(x=0, y=0, z=-wz_deg)</td>
+                                <td class="px-5 py-3">Proportional yaw centering ($\omega_z = -1.65\,\theta$) until $|\theta| \le 10^\circ$.</td>
+                            </tr>
+                            <tr class="hover:bg-slate-50/50 bg-blue-50/30">
+                                <td class="px-5 py-3 font-mono font-semibold text-blue-700">CHASING</td>
+                                <td class="px-5 py-3 font-mono text-blue-600">chassis.drive_speed(x=vx, y=0.0, z=-wz_deg)</td>
+                                <td class="px-5 py-3 font-medium text-slate-800">Flatness pursuit: executes $v_{\text{ref}}(t)$; lateral velocity $v_y = 0.0$ strictly enforced.</td>
+                            </tr>
+                            <tr class="hover:bg-slate-50/50 bg-emerald-50/40">
+                                <td class="px-5 py-3 font-mono font-semibold text-emerald-700">ARRIVED (20cm)</td>
+                                <td class="px-5 py-3 font-mono text-emerald-600">chassis.drive_speed(x=0, y=0, z=0)</td>
+                                <td class="px-5 py-3 font-semibold text-emerald-800">Active electrical brake engages the instant $d(t) \le 0.200\text{ m}$; voltages drop to 0 V.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Motor Voltage Model -->
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h3 class="text-base font-semibold text-slate-900 mb-2">Motor Armature Terminal Voltage Model (Assessment Eq. 5)</h3>
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 text-sm overflow-x-auto text-slate-700">
+                    $$V_i(t) = K_v\,\omega_i(t) + K_a\left(\frac{\omega_i(t) - \omega_i(t-\Delta t)}{\Delta t}\right), \quad K_v = 0.38\text{ V}\cdot\text{s/rad}, \quad K_a = 0.06\text{ V}\cdot\text{s}^2\text{/rad}$$
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================== -->
+        <!-- POINT 3: GRAPH OF REFERENCE FOR VELOCITY AND X                     -->
+        <!-- ================================================================== -->
+        <section id="point3" class="section-content space-y-6 hidden">
+            <div class="border-b border-slate-200 pb-4 flex justify-between items-center">
+                <div>
+                    <span class="text-xs font-bold text-emerald-600 uppercase tracking-widest">Presentation Focus #3</span>
+                    <h2 class="text-2xl font-bold text-slate-900 mt-1">Graph of Reference for Velocity and Position $x(t)$</h2>
+                </div>
+                <span class="text-xs font-mono bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                    AprilTag T₃ (1.50 m Run)
+                </span>
+            </div>
+
+            <!-- Main High-Res Graph -->
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 text-center">
+                <img src="fig_ref_x_and_velocity.png" alt="Reference vs Actual for Velocity and X" class="w-full max-w-4xl mx-auto rounded-xl border border-slate-100 shadow-sm">
+                <p class="text-xs text-slate-500 mt-3 font-medium">
+                    Figure 1: Planned Flat Reference vs. Actual Continuous Telemetry for Longitudinal Position $x(t)$ and Forward Velocity $v_x(t)$.
+                </p>
+            </div>
+
+            <!-- Technical Analysis Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+                    <h3 class="text-base font-semibold text-slate-900 flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                        Longitudinal Position Response $x(t)$
+                    </h3>
+                    <ul class="text-xs text-slate-600 space-y-2 leading-relaxed">
+                        <li>&bull; <strong class="text-slate-800">Smooth Reference Profile:</strong> Starts at $x(0) = 0.0\text{ m}$ and converges smoothly to $x(13.0) = 1.30\text{ m}$ ($20\text{ cm}$ before the $1.50\text{ m}$ tag).</li>
+                        <li>&bull; <strong class="text-slate-800">Actual Odometry Trajectory:</strong> Tracks the smooth cubic curvature cleanly without erratic overshoot or hunting.</li>
+                        <li>&bull; <strong class="text-slate-800">Terminal Boundary Standoff:</strong> Active electrical braking locks the wheels at $1.30\text{ m}$, squarely halting the robot.</li>
+                    </ul>
+                </div>
+
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+                    <h3 class="text-base font-semibold text-slate-900 flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
+                        Forward Linear Velocity Response $v_x(t)$
+                    </h3>
+                    <ul class="text-xs text-slate-600 space-y-2 leading-relaxed">
+                        <li>&bull; <strong class="text-slate-800">Overcoming Static Friction ($t = 0\text{ s}$):</strong> Initiates with non-zero crawl speed $\dot{x}(0) = 0.060\text{ m/s}$ to eliminate gearbox deadband jerk.</li>
+                        <li>&bull; <strong class="text-slate-800">Peak Cruising Speed ($t = 5.57\text{ s}$):</strong> Peaks at $0.137\text{ m/s}$, safely below the maximum chassis limit of $0.160\text{ m/s}$.</li>
+                        <li>&bull; <strong class="text-slate-800">Near-Field Deceleration:</strong> Smoothly decelerates toward zero, smoothly switching to optical dead reckoning below $35\text{ cm}$.</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================== -->
+        <!-- POINT 4: TRACKING ERRORS                                           -->
+        <!-- ================================================================== -->
+        <section id="point4" class="section-content space-y-6 hidden">
+            <div class="border-b border-slate-200 pb-4 flex justify-between items-center">
+                <div>
+                    <span class="text-xs font-bold text-amber-600 uppercase tracking-widest">Presentation Focus #4</span>
+                    <h2 class="text-2xl font-bold text-slate-900 mt-1">Empirical Tracking Error Analysis</h2>
+                </div>
+                <span class="text-xs font-mono bg-amber-50 text-amber-700 border border-amber-200 px-3 py-1.5 rounded-lg">
+                    Hardware Verified
+                </span>
+            </div>
+
+            <!-- Error Graph -->
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 text-center">
+                <img src="fig_tracking_errors.png" alt="Tracking Error Profiles" class="w-full max-w-4xl mx-auto rounded-xl border border-slate-100 shadow-sm">
+                <p class="text-xs text-slate-500 mt-3 font-medium">
+                    Figure 2: Empirical Tracking Errors for Position ($e_x, e_y$), Velocity ($e_v$), Target Distance ($e_d$), and Bearing Heading ($e_\theta$).
+                </p>
+            </div>
+
+            <!-- Statistics Table -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+                    <h3 class="text-base font-semibold text-slate-900">Quantified Tracking Performance Metrics</h3>
+                    <span class="text-xs font-mono bg-slate-100 text-slate-600 px-2.5 py-1 rounded-md">Continuous 20 Hz Log</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs text-slate-600">
+                        <thead class="bg-slate-50 text-slate-700 uppercase font-semibold border-b border-slate-200">
+                            <tr>
+                                <th class="px-5 py-3.5">Tracking Variable</th>
+                                <th class="px-5 py-3.5">RMSE</th>
+                                <th class="px-5 py-3.5">Peak Error ($\max|e|$)</th>
+                                <th class="px-5 py-3.5">Terminal Steady-State</th>
+                                <th class="px-5 py-3.5">Performance Analysis</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <tr class="hover:bg-slate-50/50">
+                                <td class="px-5 py-3 font-semibold text-slate-800">Longitudinal Position $e_x$</td>
+                                <td class="px-5 py-3 font-mono font-medium text-slate-700">0.556 m (55.6 cm)</td>
+                                <td class="px-5 py-3 font-mono text-slate-700">0.751 m</td>
+                                <td class="px-5 py-3 font-mono font-bold text-emerald-600">0.0196 m (1.96 cm)</td>
+                                <td class="px-5 py-3">Transient dynamic lag during cruise; converges to &lt;2 cm terminal standoff error.</td>
+                            </tr>
+                            <tr class="hover:bg-slate-50/50">
+                                <td class="px-5 py-3 font-semibold text-slate-800">Lateral Position $e_y$</td>
+                                <td class="px-5 py-3 font-mono font-medium text-slate-700">0.012 m (1.2 cm)</td>
+                                <td class="px-5 py-3 font-mono text-slate-700">0.028 m</td>
+                                <td class="px-5 py-3 font-mono font-bold text-emerald-600">0.0040 m (0.40 cm)</td>
+                                <td class="px-5 py-3">Strict adherence to nonholonomic constraint ($v_y = 0.0$); zero lateral drift.</td>
+                            </tr>
+                            <tr class="hover:bg-slate-50/50">
+                                <td class="px-5 py-3 font-semibold text-slate-800">Linear Velocity $e_v$</td>
+                                <td class="px-5 py-3 font-mono font-medium text-slate-700">0.484 m/s</td>
+                                <td class="px-5 py-3 font-mono text-slate-700">0.137 m/s</td>
+                                <td class="px-5 py-3 font-mono font-bold text-emerald-600">0.0000 m/s</td>
+                                <td class="px-5 py-3">Governed by motor acceleration bandwidth; brings chassis to a complete dead halt.</td>
+                            </tr>
+                            <tr class="hover:bg-slate-50/50 bg-emerald-50/30">
+                                <td class="px-5 py-3 font-semibold text-emerald-900">Target Standoff $e_d$</td>
+                                <td class="px-5 py-3 font-mono font-medium text-emerald-800">0.041 m (4.1 cm)</td>
+                                <td class="px-5 py-3 font-mono text-emerald-800">0.065 m</td>
+                                <td class="px-5 py-3 font-mono font-bold text-emerald-700">+0.0200 m (2.00 cm)</td>
+                                <td class="px-5 py-3 font-medium text-emerald-900">Halts at actual $d = 0.220\text{ m}$ (target: $0.200\text{ m}$), purely via optical dead reckoning.</td>
+                            </tr>
+                            <tr class="hover:bg-slate-50/50">
+                                <td class="px-5 py-3 font-semibold text-slate-800">Heading Alignment $e_\theta$</td>
+                                <td class="px-5 py-3 font-mono font-medium text-slate-700">0.038 rad (2.1&deg;)</td>
+                                <td class="px-5 py-3 font-mono text-slate-700">0.082 rad (4.7&deg;)</td>
+                                <td class="px-5 py-3 font-mono font-bold text-emerald-600">0.015 rad (0.86&deg;)</td>
+                                <td class="px-5 py-3">Continuous visual centering maintains the tag centered in the camera's FOV.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================== -->
+        <!-- POINT 5: YOUTUBE VIDEO DEMONSTRATIONS                              -->
+        <!-- ================================================================== -->
+        <section id="point5" class="section-content space-y-6 hidden">
+            <div class="border-b border-slate-200 pb-4 flex justify-between items-center">
+                <div>
+                    <span class="text-xs font-bold text-red-600 uppercase tracking-widest">Presentation Focus #5</span>
+                    <h2 class="text-2xl font-bold text-slate-900 mt-1">Laboratory Demonstration Videos from YouTube Channel</h2>
+                </div>
+                <a href="https://youtu.be/Z7XR6nu3mu0?si=uz1j3nOYoMPpDBvn" target="_blank" class="text-xs bg-red-600 hover:bg-red-700 text-white font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-sm">
+                    Open in YouTube ↗
+                </a>
+            </div>
+
+            <!-- YouTube Video Embed -->
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-900">Assessment 2: Autonomous Differential Flatness Pursuit & 20 cm Standoff</h3>
+                        <p class="text-xs text-slate-500">Live physical robot pursuit of AprilTag T₃ (1.50 m initial distance) with real-time zero-latency feed.</p>
+                    </div>
+                    <span class="bg-red-100 text-red-700 font-mono text-xs px-2.5 py-1 rounded-md font-semibold">Primary Demo</span>
+                </div>
+
+                <div class="aspect-video w-full rounded-xl overflow-hidden shadow-md bg-black">
+                    <iframe class="w-full h-full" src="https://www.youtube.com/embed/Z7XR6nu3mu0" title="SCE 672 Assessment 2 Demonstration" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                </div>
+
+                <!-- Timeline Breakdown -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 pt-2">
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                        <div class="font-bold text-indigo-600">0:00 - 0:04</div>
+                        <div class="font-semibold text-slate-800 mt-0.5">Initialization</div>
+                        <p class="text-slate-500 mt-1">Arm pitches $-22^\circ$ down, camera feed live over Wi-Fi AP.</p>
+                    </div>
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                        <div class="font-bold text-blue-600">0:04 - 0:09</div>
+                        <div class="font-semibold text-slate-800 mt-0.5">Visual Centering</div>
+                        <p class="text-slate-500 mt-1">In-place rotation centers AprilTag $T_3$ to $|\theta| \le 10^\circ$.</p>
+                    </div>
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                        <div class="font-bold text-emerald-600">0:09 - 0:22</div>
+                        <div class="font-semibold text-slate-800 mt-0.5">Flatness Pursuit</div>
+                        <p class="text-slate-500 mt-1">Accelerates to $0.137\text{ m/s}$ along straight path ($v_y = 0$).</p>
+                    </div>
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                        <div class="font-bold text-red-600">0:22 - 0:26</div>
+                        <div class="font-semibold text-slate-800 mt-0.5">20 cm Standoff Brake</div>
+                        <p class="text-slate-500 mt-1">Dead-reckoning below 35 cm; locks motors cleanly at 20 cm.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Comparison with Assessment 1 -->
+            <div class="bg-gradient-to-r from-slate-900 to-indigo-950 p-6 rounded-2xl text-white shadow-md flex flex-col md:flex-row justify-between items-center gap-6">
+                <div>
+                    <span class="text-xs uppercase tracking-wider text-indigo-400 font-semibold">Academic Baseline Comparison</span>
+                    <h3 class="text-xl font-bold mt-1">Assessment 1: Manual Teleoperation & Visual Search</h3>
+                    <p class="text-xs text-slate-300 mt-2 max-w-xl leading-relaxed">
+                        In Assessment 1, the robot was manually teleoperated with keyboard inputs and open-loop search. Assessment 2 completely automates navigation using differential flatness trajectory planning, closed-loop visual servo centering, and automated motor armature voltage telemetry.
+                    </p>
+                </div>
+                <a href="https://www.youtube.com/watch?v=R7kh0SIcQ_U" target="_blank" class="px-5 py-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-2">
+                    <span>Watch Assessment 1 Video</span> ↗
+                </a>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-slate-900 text-slate-400 py-6 px-4 border-t border-slate-800 text-xs text-center no-print">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-2">
+            <div>SCE 672: Advanced Robotics &bull; Assessment 2 Presentation Report &bull; KFUPM</div>
+            <div class="text-slate-500">
+                Direct launcher: <code class="text-slate-300">run_v4.bat</code> &bull; Branch: <code class="text-slate-300">main</code>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Interactive Tab Script -->
+    <script>
+        function switchTab(tabId) {
+            // Hide all content sections
+            document.querySelectorAll('.section-content').forEach(el => {
+                el.classList.add('hidden');
+            });
+            // Remove active from all buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            // Show selected section
+            const targetSection = document.getElementById(tabId);
+            if (targetSection) targetSection.classList.remove('hidden');
+            // Set active button
+            const targetBtn = document.getElementById('tab-' + tabId);
+            if (targetBtn) targetBtn.classList.add('active');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    </script>
+</body>
+</html>

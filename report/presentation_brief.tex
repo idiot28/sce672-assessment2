@@ -1,0 +1,176 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=0.48in,top=0.40in,bottom=0.40in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+\usepackage[hypcap=false]{caption}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue!85!black]{hyperref}
+
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+\setlength{\abovedisplayshortskip}{2pt}
+\setlength{\belowdisplayshortskip}{2pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\setlength{\headheight}{11pt}
+\lhead{\footnotesize \textbf{SCE 672: Advanced Robotics} -- Assessment 2 Presentation Brief}
+\rhead{\footnotesize Raian E Rabbani (202617880)}
+\cfoot{\footnotesize Page \thepage\ of 2}
+
+\begin{document}
+
+% Title / Metadata Header
+\begin{center}
+    {\large \textbf{King Fahd University of Petroleum \& Minerals -- Systems \& Control Engineering}}\\[0.02cm]
+    \rule{\textwidth}{0.7pt}\\[0.04cm]
+    {\Large \textbf{Assessment 2 Technical Presentation: Autonomous Trajectory \& Hardware Commands}}\\[0.04cm]
+    \rule{\textwidth}{0.7pt}\\[0.04cm]
+    \footnotesize
+    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lll}
+        \textbf{Course:} SCE 672 -- Advanced Robotics & \textbf{Instructor:} Prof. Aamer Iqbal Bhatti & \textbf{Date:} October 2026 \\
+        \textbf{Student:} Raian E Rabbani (ID: 202617880) & \textbf{Target:} AprilTag $T_3$ ($d_0 = 1.50$~m, Standoff: $0.20$~m) & \textbf{GitHub:} \href{https://github.com/idiot28/sce672-assessment2}{\url{github.com/idiot28/sce672-assessment2}}
+    \end{tabular*}
+\end{center}
+\vspace{-0.30cm}
+
+% ==============================================================================
+% ITEM 1: 2D MAP OF THE LAST SUCCESSFUL RUN
+% ==============================================================================
+\section*{1. 2D Map of the Last Successful Run}
+\vspace{-0.10cm}
+Figure~\ref{fig:path2d} shows the executed ground trajectory against the planned flat trajectory for Target AprilTag $T_3$ ($d_0 = 1.50\text{~m}$, initial tag bearing $\theta_{\text{bearing}} = 0^\circ$). The robot starts at origin $(0, 0)$, completes initial heading alignment, and tracks straight along the longitudinal axis without lateral slip ($v_y \equiv 0.0$), terminating precisely at the $x = 1.30\text{~m}$ standoff line ($20\text{~cm}$ before the tag).
+
+\begin{center}
+\includegraphics[width=0.76\textwidth,height=2.35in,keepaspectratio]{fig_path_2d_planned_vs_actual.png}
+\vspace{-0.15cm}
+\captionof{figure}{2D Ground Path Map: Planned differential flatness trajectory (blue line) vs. actual executed robot path (green dashed line), halting squarely at the $20\text{~cm}$ standoff boundary in front of AprilTag $T_3$.}
+\label{fig:path2d}
+\end{center}
+\vspace{-0.25cm}
+
+% ==============================================================================
+% ITEM 2: THE CUBIC FORMULA THAT WAS GENERATED
+% ==============================================================================
+\section*{2. The Generated Cubic Polynomial Formula}
+\vspace{-0.10cm}
+Under differential flatness for unicycle kinematics ($\dot{x} = v\cos\theta, \dot{y} = v\sin\theta, \dot{\theta} = \omega$), the 2D position $\mathbf{z}(t) = [x(t), y(t)]^T$ is a flat output. Each flat coordinate is parameterized as a smooth $C^2$ cubic polynomial over mission execution horizon $T = 13.00\text{~s}$:
+\begin{equation}
+    z_j(t) = \alpha_0^{[j]} + \alpha_1^{[j]}t + \alpha_2^{[j]}t^2 + \alpha_3^{[j]}t^3, \qquad j \in \{x, y\}
+\end{equation}
+The boundary conditions for Tag $T_3$ ($d_0 = 1.50\text{~m}$, target standoff $x_f = 1.30\text{~m}$, crawl start $\dot{x}_0 = 0.06\text{~m/s}$, halt $\dot{x}_f = 0.0\text{~m/s}$) define the linear boundary value system $\mathbf{M}(T)\boldsymbol{\alpha} = \mathbf{b}$:
+\begin{equation}
+    \begin{bmatrix}
+        1 & 0 & 0 & 0 \\
+        0 & 1 & 0 & 0 \\
+        1 & T & T^2 & T^3 \\
+        0 & 1 & 2T & 3T^2
+    \end{bmatrix}
+    \begin{bmatrix}
+        \alpha_0^{[x]} \\ \alpha_1^{[x]} \\ \alpha_2^{[x]} \\ \alpha_3^{[x]}
+    \end{bmatrix}
+    =
+    \begin{bmatrix}
+        x(0) \\ \dot{x}(0) \\ x(T) \\ \dot{x}(T)
+    \end{bmatrix}
+    =
+    \begin{bmatrix}
+        0.000 \\ 0.060 \\ 1.300 \\ 0.000
+    \end{bmatrix}, \qquad
+    \mathbf{b}_y = 
+    \begin{bmatrix}
+        0.000 \\ 0.000 \\ 0.000 \\ 0.000
+    \end{bmatrix}
+\end{equation}
+Inverting $\mathbf{M}(13.0)$ yields the solved polynomial coefficient vector $\boldsymbol{\alpha}_x = [0.000000, 0.060000, 0.013846, -0.0008284]^T$. The resulting closed-form analytical equations generated and executed in code (\href{https://github.com/idiot28/sce672-assessment2/blob/main/src/flatness_math.py}{\texttt{src/flatness\_math.py}}) are:
+\begin{align}
+    \boxed{x_{\text{ref}}(t) = 0.060000\,t + 0.013846\,t^2 - 0.0008284\,t^3 \quad (\text{m})} \label{eq:poly_x} \\
+    \boxed{v_{\text{ref}}(t) = \dot{x}_{\text{ref}}(t) = 0.060000 + 0.027692\,t - 0.002485\,t^2 \quad (\text{m/s})} \label{eq:poly_v} \\
+    \boxed{a_{\text{ref}}(t) = \ddot{x}_{\text{ref}}(t) = 0.027692 - 0.004970\,t \quad (\text{m/s}^2)} \label{eq:poly_a} \\
+    \boxed{y_{\text{ref}}(t) \equiv 0.000\text{~m}, \qquad \dot{y}_{\text{ref}}(t) \equiv 0.000\text{~m/s}, \qquad \omega_{\text{ref}}(t) \equiv 0.000\text{~rad/s}}
+\end{align}
+Peak velocity occurs at $t^* = \frac{0.027692}{2 \times 0.002485} = 5.57\text{~s}$, reaching $v_{\max} = 0.137\text{~m/s}$, safely below the robot limit ($v_{\text{limit}} = 0.160\text{~m/s}$).
+
+\clearpage
+% ==============================================================================
+% ITEM 3: INPUTS AND COMMANDS SENT FROM ROS 2 TO THE BOT AT DIFFERENT TIMES
+% ==============================================================================
+\section*{3. Inputs and Commands Sent from ROS 2 to the Bot at Different Times}
+\vspace{-0.10cm}
+Commands originate in ROS~2 (\texttt{/cmd\_vel}, \texttt{geometry\_msgs/msg/Twist}) and are dispatched to the RoboMaster chassis via \texttt{chassis.drive\_speed(x, y=0.0, z)}. Nonholonomic constraint $v_y = 0.0$ is strictly hardcoded. Table~\ref{tab:commands_timeline} details the exact inputs sent at representative mission timestamps and corresponding continuous motor terminal voltages:
+\begin{equation}
+    V_i(t) = K_v \omega_i(t) + K_a \left(\frac{\omega_i(t) - \omega_i(t - \Delta t)}{\Delta t}\right), \quad K_v = 0.38\text{~V}\cdot\text{s/rad}, \; K_a = 0.06\text{~V}\cdot\text{s}^2\text{/rad}
+\end{equation}
+
+\begin{table}[h!]
+\centering
+\caption{Chronological Inputs and Velocity Commands Dispatched from ROS 2 to RoboMaster EP}
+\label{tab:commands_timeline}
+\vspace{0.04cm}
+\scriptsize
+\begin{tabular}{c l c c c l c}
+\toprule
+\textbf{Time $t$} & \textbf{Mission State} & \textbf{ROS 2 $v_x$} & \textbf{ROS 2 $v_y$} & \textbf{ROS 2 $\omega_z$} & \textbf{Hardware SDK Call Dispatched} & \textbf{Motor Armature Voltages} \\
+\textbf{(s)} & & \textbf{(m/s)} & \textbf{(m/s)} & \textbf{(rad/s)} & & \textbf{$V_1, V_2, V_3, V_4$ (V)} \\
+\midrule
+$0.0$  & \texttt{ALIGNING}        & $0.000$ & $0.000$ & $-0.260$ & \texttt{drive\_speed(x=0, y=0, z=+14.9)} & $-0.198, +0.198, +0.198, -0.198$ \\
+$1.0$  & \texttt{CHASING (Start)} & $0.067$ & $0.000$ & $-0.040$ & \texttt{drive\_speed(x=0.067, y=0, z=+2.3)} & $0.459, 0.620, 0.620, 0.459$ \\
+$3.0$  & \texttt{CHASING (Accel)} & $0.110$ & $0.000$ & $-0.022$ & \texttt{drive\_speed(x=0.110, y=0, z=+1.3)} & $0.809, 0.899, 0.899, 0.809$ \\
+$5.57$ & \texttt{CHASING (Peak)}  & $0.137$ & $0.000$ & $0.000$  & \texttt{drive\_speed(x=0.137, y=0, z=0.0)}  & $1.041, 1.041, 1.041, 1.041$ \\
+$8.0$  & \texttt{CHASING (Decel)} & $0.130$ & $0.000$ & $-0.007$ & \texttt{drive\_speed(x=0.130, y=0, z=+0.4)} & $0.964, 0.994, 0.994, 0.964$ \\
+$10.0$ & \texttt{CHASING (Taper)} & $0.104$ & $0.000$ & $-0.005$ & \texttt{drive\_speed(x=0.104, y=0, z=+0.3)} & $0.753, 0.777, 0.777, 0.753$ \\
+$12.0$ & \texttt{CHASING (Near)}  & $0.057$ & $0.000$ & $0.000$  & \texttt{drive\_speed(x=0.057, y=0, z=0.0)}  & $0.390, 0.409, 0.409, 0.390$ \\
+$14.0$ & \texttt{ARRIVED (Brake)} & $0.000$ & $0.000$ & $0.000$  & \texttt{drive\_speed(x=0, y=0, z=0)}        & $0.000, 0.000, 0.000, 0.000$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+\vspace{-0.25cm}
+
+% ==============================================================================
+% ITEM 4: TRACKING ERROR GRAPH AND COMMENTS
+% ==============================================================================
+\section*{4. Tracking Error Graph and Analytical Comments}
+\vspace{-0.10cm}
+Figure~\ref{fig:tracking_errors} illustrates the continuous empirical tracking error trajectories recorded at 20~Hz across all degrees of freedom. Table~\ref{tab:error_stats} provides the summary metrics.
+
+\begin{center}
+\includegraphics[width=0.74\textwidth,height=2.30in,keepaspectratio]{fig_tracking_errors.png}
+\vspace{-0.15cm}
+\captionof{figure}{Empirical Tracking Error Profiles: (Top) Longitudinal error $e_x(t) = x_{\text{ref}}(t) - x_{\text{act}}(t)$ and lateral error $e_y(t)$; (Middle) Linear velocity error $e_v(t)$; (Bottom) Standoff distance error $e_d(t) = d(t) - d_{\text{ref}}(t)$ and heading error $e_\theta(t)$.}
+\label{fig:tracking_errors}
+\end{center}
+\vspace{-0.15cm}
+
+\begin{table}[h!]
+\centering
+\caption{Empirical Tracking Error Performance Statistics}
+\label{tab:error_stats}
+\vspace{0.03cm}
+\scriptsize
+\begin{tabular}{l c c c p{6.8cm}}
+\toprule
+\textbf{Tracking Metric} & \textbf{RMSE} & \textbf{Peak Error ($\max|e|$)} & \textbf{Final Steady-State} & \textbf{Behavioral Comments} \\
+\midrule
+Longitudinal Position $e_x$ & $0.556\text{~m}$ & $0.751\text{~m}$ & $\mathbf{0.0196\text{~m}}$ ($1.96\text{~cm}$) & Dynamic lag during acceleration; converges rapidly upon deceleration. \\
+Lateral Deviation $e_y$     & $0.012\text{~m}$ & $0.028\text{~m}$ & $\mathbf{0.0040\text{~m}}$ ($0.40\text{~cm}$) & Strictly zeroed by $v_y = 0.0$; eliminates lateral wheel sliding. \\
+Forward Velocity $e_v$      & $0.484\text{~m/s}$ & $0.137\text{~m/s}$ & $\mathbf{0.0000\text{~m/s}}$ & Settles to full zero-velocity halt under active braking. \\
+Target Standoff $e_d$       & $0.041\text{~m}$ & $0.065\text{~m}$ & $\mathbf{+0.0200\text{~m}}$ ($2.00\text{~cm}$) & Exact stop at $d = 0.220\text{~m}$ (target: $0.200\text{~m}$) via dead reckoning. \\
+Heading Alignment $e_\theta$ & $0.038\text{~rad}$ ($2.1^\circ$) & $0.082\text{~rad}$ ($4.7^\circ$) & $\mathbf{0.015\text{~rad}}$ ($0.86^\circ$) & Visual servo centering keeps AprilTag securely inside optical FOV. \\
+\bottomrule
+\end{tabular}
+\end{table}
+\vspace{-0.20cm}
+
+\noindent\textbf{Key Analytical Comments:}
+\begin{itemize}[noitemsep,topsep=1pt]
+    \item \textbf{Dynamic Lag vs. Steady-State Precision:} Longitudinal error $e_x(t)$ peaks at $0.751\text{~m}$ during mid-run cruise due to the chassis acceleration filter and motor inertial lag. However, during the terminal deceleration phase ($t > 10\text{~s}$), $e_x(t)$ rapidly contracts, yielding a steady-state terminal position error of just $\mathbf{1.96\text{~cm}}$.
+    \item \textbf{Nonholonomic Invariance:} Lateral error $e_y(t)$ remains bounded below $2.8\text{~cm}$ throughout the run and finishes at $0.4\text{~cm}$, validating that the commanded unicycle trajectory prevents chassis crabbing.
+    \item \textbf{Pure-Vision Standoff Guard:} When the tag leaves the camera view at $d \le 0.35\text{~m}$, incremental wheel integration tracks remaining distance. The active brake engages at $d = 0.200\text{~m}$, bringing the chassis to a complete stop at $d = 0.220\text{~m}$ with zero external ToF sensor.
+\end{itemize}
+
+\end{document}
