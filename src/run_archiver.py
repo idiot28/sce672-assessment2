@@ -29,6 +29,7 @@ if PROJECT_DIR not in sys.path:
 from flatness_math import (
     compute_trajectory_matrices,
     format_trajectory_report,
+    format_initial_poses_report,
     compute_boundary_matrix,
     compute_boundary_matrix_inv,
     get_mecanum_jacobian,
@@ -78,6 +79,7 @@ def generate_run_plots(
     standoff=0.20,
     tag_id=3,
     trajectory_meta=None,
+    initial_poses=None,
 ):
     """
     Generates:
@@ -164,12 +166,23 @@ def generate_run_plots(
     # Start Point
     ax.plot(0.0, 0.0, 'o', color='black', markersize=8, label='Start Pose $(0, 0)$')
 
+    # Memory tags if recorded
+    if initial_poses and "all_tags_in_memory" in initial_poses:
+        for tid_str, tinfo in initial_poses["all_tags_in_memory"].items():
+            if not tinfo.get("is_target", False):
+                wx = float(tinfo.get("world_x_m", 0.0))
+                wy = float(tinfo.get("world_y_m", 0.0))
+                ax.plot(wx, wy, '^', color='#d97706', markersize=8, markeredgecolor='black', label=f'Memory Tag T{tid_str}')
+
     # Mathematical Formula Box
     poly_box = (
         f"Differential Flatness Cubic Model:\n"
         f"x(t) = {alpha_x[0]:.2f} + {alpha_x[1]:.2f}t + {alpha_x[2]:+.3f}t² + {alpha_x[3]:+.4f}t³\n"
         f"M(T)·α = b,  T = {T_plan:.2f} s"
     )
+    if initial_poses and "robot_pose" in initial_poses:
+        rp = initial_poses["robot_pose"]
+        poly_box += f"\nRecorded Bot Pose: ({rp.get('x_m', 0.0):+.2f}, {rp.get('y_m', 0.0):+.2f})m, {rp.get('yaw_deg', 0.0):+.1f}°"
     ax.text(
         0.03, 0.95, poly_box, transform=ax.transAxes, fontsize=8.2, verticalalignment='top',
         family='monospace', bbox=dict(boxstyle='round,pad=0.5', facecolor='#e8f4fd', edgecolor='#0284c7', alpha=0.92)
@@ -239,7 +252,7 @@ def generate_run_plots(
     return path_plot_file, vel_plot_file
 
 
-def archive_run(run_name, source_t1_csv, source_cont_csv, target_tag_id=3, d0=1.50, standoff=0.20, trajectory_meta=None):
+def archive_run(run_name, source_t1_csv, source_cont_csv, target_tag_id=3, d0=1.50, standoff=0.20, trajectory_meta=None, initial_poses=None):
     """
     Archives a completed run into runs/<run_name>/, generates plots,
     saves trajectory_and_matrices.txt, updates run_summary.json, and updates runs/README.md.
@@ -255,14 +268,40 @@ def archive_run(run_name, source_t1_csv, source_cont_csv, target_tag_id=3, d0=1.
         print(f"[!] Warning: No data found in {source_t1_csv} or {source_cont_csv}")
         return None
 
+    # Load initial poses from disk if not directly supplied
+    if initial_poses is None:
+        cand_files = [
+            os.path.join(PROJECT_DIR, "initial_poses_before_chase.json"),
+            os.path.join(SCRIPT_DIR, "initial_poses_before_chase.json"),
+            os.path.join(PROJECT_DIR, "runs", "latest_initial_poses.json"),
+        ]
+        for cf in cand_files:
+            if os.path.exists(cf):
+                try:
+                    with open(cf, "r", encoding="utf-8") as f:
+                        initial_poses = json.load(f)
+                    if initial_poses:
+                        break
+                except Exception:
+                    pass
+
+    # Save initial poses snapshot into run_dir
+    if initial_poses:
+        poses_file = os.path.join(run_dir, "initial_poses_before_chase.json")
+        with open(poses_file, "w", encoding="utf-8") as f:
+            json.dump(initial_poses, f, indent=2)
+
     # Compute trajectory matrices if not provided
     if trajectory_meta is None:
         trajectory_meta = compute_trajectory_matrices(
             d0=d0, bearing_rad=0.0, skew_rad=0.0, standoff_m=standoff, v0=0.06, v_max=0.38
         )
 
-    # Save formatted mathematical report
-    report_text = format_trajectory_report(trajectory_meta)
+    # Save formatted mathematical report (with initial poses report prepended)
+    report_text = ""
+    if initial_poses:
+        report_text += format_initial_poses_report(initial_poses) + "\n\n"
+    report_text += format_trajectory_report(trajectory_meta)
     report_file = os.path.join(run_dir, "trajectory_and_matrices.txt")
     with open(report_file, "w", encoding="utf-8") as f:
         f.write(report_text + "\n")
@@ -299,7 +338,8 @@ def archive_run(run_name, source_t1_csv, source_cont_csv, target_tag_id=3, d0=1.
     path_png, vel_png = generate_run_plots(
         run_dir, t_cont, vx_cont, wz_cont, v1_cont, d_cont, state_cont,
         t_disc, v_disc, v1_disc, d0=d0, standoff=standoff, tag_id=target_tag_id,
-        trajectory_meta=trajectory_meta
+        trajectory_meta=trajectory_meta,
+        initial_poses=initial_poses,
     )
 
     # Compute summary metrics
@@ -318,6 +358,7 @@ def archive_run(run_name, source_t1_csv, source_cont_csv, target_tag_id=3, d0=1.
         "peak_velocity_mps": round(peak_v, 3),
         "final_motor_voltage_V": round(final_v1, 3),
         "status": "COMPLETED (ARRIVED AT 20CM STANDOFF)",
+        "initial_poses_before_chase": initial_poses,
         "trajectory_analysis": trajectory_meta,
     }
 

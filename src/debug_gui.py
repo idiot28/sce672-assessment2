@@ -30,7 +30,7 @@ from tkinter import ttk
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from PIL import Image, ImageTk, ImageDraw
 
-from flatness_math import format_trajectory_report, compute_trajectory_matrices
+from flatness_math import format_trajectory_report, compute_trajectory_matrices, format_initial_poses_report
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..")) if os.path.basename(SCRIPT_DIR) == "src" else SCRIPT_DIR
@@ -156,6 +156,7 @@ class DebugApp:
         self._was_wasd_moving = False
         self.wasd_btns = {}
         self._last_trajectory_analysis = {}
+        self._last_initial_poses = {}
         self.current_trail = []
         self.history_trails = []
 
@@ -815,6 +816,11 @@ class DebugApp:
             meta = compute_trajectory_matrices(1.50, 0.0, 0.0)
             report_str = format_trajectory_report(meta)
 
+        if hasattr(self, '_last_initial_poses') and self._last_initial_poses:
+            poses_str = format_initial_poses_report(self._last_initial_poses)
+            if poses_str:
+                report_str = poses_str + "\n\n" + report_str
+
         txt.insert(tk.END, report_str)
         txt.configure(state=tk.DISABLED)
 
@@ -988,11 +994,22 @@ class DebugApp:
 
             ax.plot(0.0, 0.0, 'o', color='black', markersize=8, label='Start Pose $(0, 0)$')
 
+            # Plot memory tags if recorded
+            if hasattr(self, '_last_initial_poses') and self._last_initial_poses and "all_tags_in_memory" in self._last_initial_poses:
+                for tid_str, tinfo in self._last_initial_poses["all_tags_in_memory"].items():
+                    if not tinfo.get("is_target", False):
+                        wx = float(tinfo.get("world_x_m", 0.0))
+                        wy = float(tinfo.get("world_y_m", 0.0))
+                        ax.plot(wx, wy, '^', color='#d97706', markersize=8, markeredgecolor='black', label=f'Memory Tag T{tid_str}')
+
             poly_box = (
                 f"Differential Flatness Cubic Model:\n"
                 f"x(t) = {alpha_x[0]:.2f} + {alpha_x[1]:.2f}t + {alpha_x[2]:+.3f}t² + {alpha_x[3]:+.4f}t³\n"
                 f"T = {T_plan:.2f} s | Standoff = {standoff:.2f} m"
             )
+            if hasattr(self, '_last_initial_poses') and self._last_initial_poses and "robot_pose" in self._last_initial_poses:
+                rp = self._last_initial_poses["robot_pose"]
+                poly_box += f"\nRecorded Bot Pose: ({rp.get('x_m', 0.0):+.2f}, {rp.get('y_m', 0.0):+.2f})m, {rp.get('yaw_deg', 0.0):+.1f}°"
             ax.text(
                 0.03, 0.95, poly_box, transform=ax.transAxes, fontsize=8.2, verticalalignment='top',
                 family='monospace', bbox=dict(boxstyle='round,pad=0.5', facecolor='#e8f4fd', edgecolor='#0284c7', alpha=0.92)
@@ -1214,6 +1231,10 @@ class DebugApp:
                     self.lbl_traj_meta.configure(
                         text=f"M(T) [4x4] Inverted | T = {T_val:.2f}s | J: [20, ±4] | Kv={mp.get('Kv', 0.380)}, Ka={mp.get('Ka', 0.060)}"
                     )
+
+                init_poses = d.get("initial_poses_before_chase")
+                if init_poses:
+                    self._last_initial_poses = init_poses
 
                 self._draw_radar_and_path(d)
             except Exception:

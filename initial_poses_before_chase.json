@@ -1,0 +1,55 @@
+{
+  "timestamp_iso": "2026-10-28T14:46:31.443562",
+  "timestamp_s": 1793187991.444,
+  "mission_state_before_chase": "TELEOP",
+  "robot_pose": {
+    "x_m": 0.05,
+    "y_m": -0.02,
+    "yaw_rad": 0.03,
+    "yaw_deg": 1.72,
+    "v0_mps": 0.08
+  },
+  "target_tag": {
+    "tag_id": 3,
+    "rel_dist_m": 1.48,
+    "rel_bearing_rad": 0.02,
+    "rel_bearing_deg": 1.15,
+    "rel_skew_rad": 0.0,
+    "rel_skew_deg": 0.0,
+    "world_x_m": 1.5282,
+    "world_y_m": 0.054,
+    "world_yaw_deg": 2.86,
+    "standoff_m": 0.2,
+    "standoff_world_x_m": 1.3294,
+    "standoff_world_y_m": 0.0184
+  },
+  "all_tags_in_memory": {
+    "3": {
+      "tag_id": 3,
+      "world_x_m": 1.5,
+      "world_y_m": 0.0,
+      "world_yaw_deg": 0.0,
+      "rel_dist_m": 1.4501,
+      "rel_bearing_deg": -0.93,
+      "rel_skew_deg": 0.0,
+      "is_target": true
+    },
+    "1": {
+      "tag_id": 1,
+      "world_x_m": -0.75,
+      "world_y_m": 1.1,
+      "world_yaw_deg": 120.32,
+      "rel_dist_m": 1.3764,
+      "rel_bearing_deg": 123.82,
+      "rel_skew_deg": 0.0,
+      "is_target": false
+    }
+  },
+  "boundary_conditions": {
+    "d0_m": 1.48,
+    "standoff_m": 0.2,
+    "v0_mps": 0.08,
+    "xf_rel_m": 1.28,
+    "yf_rel_m": 0.0
+  }
+}

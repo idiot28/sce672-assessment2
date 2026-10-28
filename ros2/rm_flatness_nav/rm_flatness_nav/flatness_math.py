@@ -242,6 +242,59 @@ def format_trajectory_report(traj_meta: dict) -> str:
     return "\n".join(lines)
 
 
+def format_initial_poses_report(poses: dict) -> str:
+    """
+    Renders a formatted ASCII report of the recorded robot pose and tag poses
+    captured immediately prior to cubic path planning and execution.
+    """
+    if not poses or "robot_pose" not in poses:
+        return ""
+    rp = poses.get("robot_pose", {})
+    tt = poses.get("target_tag", {})
+    tags = poses.get("all_tags_in_memory", {})
+    bc = poses.get("boundary_conditions", {})
+
+    lines = []
+    lines.append("=" * 78)
+    lines.append("   RECORDED INITIAL POSES BEFORE CUBIC PATH PLANNING & EXECUTION")
+    lines.append("=" * 78)
+    lines.append(f"Recorded Timestamp       : {poses.get('timestamp_iso', 'N/A')}")
+    lines.append(f"Mission State at Capture : {poses.get('mission_state_before_chase', 'N/A')}")
+    lines.append("")
+    lines.append("1. ROBOT INITIAL 2D WORLD POSE:")
+    lines.append(f"   Position (X, Y)       : ({rp.get('x_m', 0.0):+.4f} m, {rp.get('y_m', 0.0):+.4f} m)")
+    lines.append(f"   Heading (Yaw)         : {rp.get('yaw_deg', 0.0):+.2f} deg ({rp.get('yaw_rad', 0.0):+.4f} rad)")
+    lines.append(f"   Initial Velocity v0   : {rp.get('v0_mps', 0.0):.4f} m/s")
+    lines.append("")
+    lines.append(f"2. TARGET TAG (T{tt.get('tag_id', '?')}) INITIAL STATE & STANDOFF GOAL:")
+    lines.append(f"   Relative Distance d0  : {tt.get('rel_dist_m', 0.0):.4f} m")
+    lines.append(f"   Relative Bearing beta : {tt.get('rel_bearing_deg', 0.0):+.2f} deg ({tt.get('rel_bearing_rad', 0.0):+.4f} rad)")
+    lines.append(f"   Relative Skew psi     : {tt.get('rel_skew_deg', 0.0):+.2f} deg ({tt.get('rel_skew_rad', 0.0):+.4f} rad)")
+    lines.append(f"   Tag World Position    : ({tt.get('world_x_m', 0.0):+.4f} m, {tt.get('world_y_m', 0.0):+.4f} m)")
+    lines.append(f"   Standoff Goal (20 cm) : ({tt.get('standoff_world_x_m', 0.0):+.4f} m, {tt.get('standoff_world_y_m', 0.0):+.4f} m)")
+    if bc:
+        lines.append(f"   Boundary Goal Point   : xf_rel = {bc.get('xf_rel_m', 0.0):+.4f} m, yf_rel = {bc.get('yf_rel_m', 0.0):+.4f} m")
+    lines.append("")
+    lines.append(f"3. ALL DETECTED APRILTAGS IN SPATIAL MEMORY (Count: {len(tags)}):")
+    if tags:
+        lines.append(f"   {'Tag':<6} {'World X (m)':<14} {'World Y (m)':<14} {'Rel Dist (m)':<14} {'Rel Brg (deg)':<15} {'Role'}")
+        lines.append("   " + "-" * 76)
+        for tid, tinfo in tags.items():
+            role = "TARGET (PURSUIT)" if tinfo.get("is_target", False) else "Discovered Landmark"
+            lines.append(
+                f"   T{tinfo.get('tag_id', tid):<5} "
+                f"{tinfo.get('world_x_m', 0.0):>+10.4f} m  "
+                f"{tinfo.get('world_y_m', 0.0):>+10.4f} m  "
+                f"{tinfo.get('rel_dist_m', 0.0):>10.4f} m  "
+                f"{tinfo.get('rel_bearing_deg', 0.0):>+9.2f} deg  "
+                f"{role}"
+            )
+    else:
+        lines.append("   (No tags in memory)")
+    lines.append("=" * 78)
+    return "\n".join(lines)
+
+
 # =============================================================================
 # Problem 2(iii): Dynamic Time Horizon Scaling (Eq. 3)
 # =============================================================================

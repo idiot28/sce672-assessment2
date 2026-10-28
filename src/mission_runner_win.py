@@ -43,6 +43,7 @@ from flatness_math import (
     motor_voltages,
     compute_trajectory_matrices,
     format_trajectory_report,
+    format_initial_poses_report,
 )
 from vision_camera import (
     CameraAprilTagDetector,
@@ -305,6 +306,7 @@ class WindowsMissionRunner:
         self.cubic_T = 3.5
         self.planned_path_pts = []
         self.trajectory_analysis = {}
+        self.initial_poses_before_chase = {}
 
         # Velocities & Motor Voltage State (Strictly nonholonomic: vy = 0.0)
         self.vx = 0.0
@@ -724,9 +726,125 @@ class WindowsMissionRunner:
         m["dist_m"] = rel_dist
         return rel_dist, rel_bearing, m["skew_rad"]
 
+    def record_initial_poses_before_planning(self, dist_m: float, bearing_rad: float, skew_rad: float, v0: float):
+        """
+        Records the exact 2D world pose of the robot and all detected AprilTags
+        immediately before starting cubic path planning and execution.
+        """
+        import datetime
+        now_dt = datetime.datetime.now()
+
+        # 1. Robot World Pose
+        bot_pose = {
+            "x_m": round(float(self.odom_x), 4),
+            "y_m": round(float(self.odom_y), 4),
+            "yaw_rad": round(float(self.odom_yaw), 4),
+            "yaw_deg": round(math.degrees(self.odom_yaw), 2),
+            "v0_mps": round(float(v0), 4),
+        }
+
+        # 2. Target Tag Pose (World and Relative)
+        world_tag_dir = wrap_angle(self.odom_yaw + bearing_rad)
+        tag_world_x = self.odom_x + dist_m * math.cos(world_tag_dir)
+        tag_world_y = self.odom_y + dist_m * math.sin(world_tag_dir)
+
+        # Standoff goal in world coordinates
+        d0_clamped = max(self.standoff_m + 0.04, float(dist_m))
+        xf_rob = d0_clamped - self.standoff_m
+        yf_rob = 0.0
+        c_yaw = math.cos(self.odom_yaw)
+        s_yaw = math.sin(self.odom_yaw)
+        goal_world_x = self.odom_x + xf_rob * c_yaw - yf_rob * s_yaw
+        goal_world_y = self.odom_y + xf_rob * s_yaw + yf_rob * c_yaw
+
+        target_info = {
+            "tag_id": int(self.target_tag_id),
+            "rel_dist_m": round(float(dist_m), 4),
+            "rel_bearing_rad": round(float(bearing_rad), 4),
+            "rel_bearing_deg": round(math.degrees(bearing_rad), 2),
+            "rel_skew_rad": round(float(skew_rad), 4),
+            "rel_skew_deg": round(math.degrees(skew_rad), 2),
+            "world_x_m": round(float(tag_world_x), 4),
+            "world_y_m": round(float(tag_world_y), 4),
+            "world_yaw_deg": round(math.degrees(world_tag_dir), 2),
+            "standoff_m": round(float(self.standoff_m), 4),
+            "standoff_world_x_m": round(float(goal_world_x), 4),
+            "standoff_world_y_m": round(float(goal_world_y), 4),
+        }
+
+        # 3. All Tags in 2D Spatial Memory
+        all_tags = {}
+        for tid, tinfo in self.tag_memory.items():
+            tx = float(tinfo.get("x", 0.0))
+            ty = float(tinfo.get("y", 0.0))
+            dx = tx - self.odom_x
+            dy = ty - self.odom_y
+            rel_d = math.hypot(dx, dy)
+            rel_brg = wrap_angle(math.atan2(dy, dx) - self.odom_yaw)
+            all_tags[str(tid)] = {
+                "tag_id": int(tid),
+                "world_x_m": round(tx, 4),
+                "world_y_m": round(ty, 4),
+                "world_yaw_deg": round(math.degrees(tinfo.get("yaw", 0.0)), 2),
+                "rel_dist_m": round(rel_d, 4),
+                "rel_bearing_deg": round(math.degrees(rel_brg), 2),
+                "rel_skew_deg": round(math.degrees(tinfo.get("skew_rad", 0.0)), 2),
+                "is_target": (int(tid) == self.target_tag_id),
+            }
+
+        # Ensure target tag is included even if vision thread hasn't populated memory yet
+        str_tgt = str(self.target_tag_id)
+        if str_tgt not in all_tags:
+            all_tags[str_tgt] = {
+                "tag_id": int(self.target_tag_id),
+                "world_x_m": round(float(tag_world_x), 4),
+                "world_y_m": round(float(tag_world_y), 4),
+                "world_yaw_deg": round(math.degrees(world_tag_dir), 2),
+                "rel_dist_m": round(float(dist_m), 4),
+                "rel_bearing_deg": round(math.degrees(bearing_rad), 2),
+                "rel_skew_deg": round(math.degrees(skew_rad), 2),
+                "is_target": True,
+            }
+
+        snapshot = {
+            "timestamp_iso": now_dt.isoformat(),
+            "timestamp_s": round(time.time(), 3),
+            "mission_state_before_chase": str(self.state),
+            "robot_pose": bot_pose,
+            "target_tag": target_info,
+            "all_tags_in_memory": all_tags,
+            "boundary_conditions": {
+                "d0_m": round(d0_clamped, 4),
+                "standoff_m": round(self.standoff_m, 4),
+                "v0_mps": round(float(v0), 4),
+                "xf_rel_m": round(xf_rob, 4),
+                "yf_rel_m": round(yf_rob, 4),
+            }
+        }
+
+        self.initial_poses_before_chase = snapshot
+
+        # Save snapshot immediately to disk
+        try:
+            p_file = os.path.join(self.output_dir, "initial_poses_before_chase.json")
+            with open(p_file, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, indent=2)
+            runs_dir = os.path.join(self.output_dir, "runs")
+            os.makedirs(runs_dir, exist_ok=True)
+            with open(os.path.join(runs_dir, "latest_initial_poses.json"), "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, indent=2)
+        except Exception as e:
+            print(f"[!] Warning saving initial poses: {e}")
+
+        # Print formatted report to console
+        print("\n" + format_initial_poses_report(snapshot) + "\n")
+
     def _replan_cubic_to_tag(self, dist_m: float, bearing_rad: float, skew_rad: float, v_curr: float, log_plan: bool = False):
         d0 = max(self.standoff_m + 0.04, float(dist_m))
         v0 = max(self.v_min, min(self.v_max, float(v_curr)))
+
+        if log_plan:
+            self.record_initial_poses_before_planning(dist_m, bearing_rad, skew_rad, v0=v0)
 
         self.alpha_x, self.alpha_y, self.cubic_T, xf, yf = plan_aligning_cubic_path(
             d0=d0,
@@ -1200,6 +1318,7 @@ class WindowsMissionRunner:
                     "history_trails": [list(t) for t in self.history_trails],
                     "table1": self.table1_rows[-18:],
                     "trajectory_analysis": self.trajectory_analysis,
+                    "initial_poses_before_chase": self.initial_poses_before_chase,
                 }
 
             img_tmp = os.path.join(self.output_dir, "live_camera_tmp.jpg")
@@ -1433,6 +1552,7 @@ class WindowsMissionRunner:
                 "history_trails": [list(t) for t in self.history_trails],
                 "table1": self.table1_rows[-18:],
                 "trajectory_analysis": self.trajectory_analysis,
+                "initial_poses_before_chase": self.initial_poses_before_chase,
             }
 
     def save_run_results(self):
@@ -1464,7 +1584,13 @@ class WindowsMissionRunner:
                 for idx, pt in enumerate(self.odom_trail):
                     w.writerow([idx, pt[0], pt[1]])
 
-            # 4. Auto-archive run with dedicated folder and generated graphs
+            # 4. Save recorded initial poses before chase
+            if hasattr(self, 'initial_poses_before_chase') and self.initial_poses_before_chase:
+                poses_path = os.path.join(self.output_dir, "initial_poses_before_chase.json")
+                with open(poses_path, "w", encoding="utf-8") as f:
+                    json.dump(self.initial_poses_before_chase, f, indent=2)
+
+            # 5. Auto-archive run with dedicated folder and generated graphs
             try:
                 import datetime
                 import shutil
@@ -1477,7 +1603,8 @@ class WindowsMissionRunner:
                     target_tag_id=self.target_tag_id,
                     d0=getattr(self, 'd0_measured', 1.50),
                     standoff=self.standoff_m,
-                    trajectory_meta=getattr(self, 'trajectory_analysis', None)
+                    trajectory_meta=getattr(self, 'trajectory_analysis', None),
+                    initial_poses=getattr(self, 'initial_poses_before_chase', None),
                 )
                 if run_dir and os.path.exists(run_dir):
                     # Copy generated plot to latest_path_2d.png and report/
