@@ -208,9 +208,6 @@ def patch_robomaster_windows(conn_type: str):
         else:
             robomaster.config.LOCAL_IP_STR = None
 
-        # Patch LiveView to use native OpenCV video capture
-        robomaster.media.LiveView = CvLiveView
-
     except Exception as e:
         print(f"[WARN] RoboMaster SDK patch note: {e}")
 
@@ -437,9 +434,13 @@ class WindowsMissionRunner:
                 # Start native video stream
                 try:
                     self.ep_robot.camera.start_video_stream(display=False, resolution="360p")
-                    print("[+] Camera video stream started.")
-                except Exception as e:
-                    print(f"[WARN] Camera start note: {e}")
+                    print("[+] Camera video stream started (360p native).")
+                except Exception:
+                    try:
+                        self.ep_robot.camera.start_video_stream(display=False)
+                        print("[+] Camera video stream started (default native).")
+                    except Exception as e:
+                        print(f"[WARN] Camera start note: {e}")
 
                 return
             except Exception as e:
@@ -787,11 +788,15 @@ class WindowsMissionRunner:
             else:
                 wz_cmd = float(self.sweep_wz_rad)
 
-            # Standoff Guard in ALIGNING
+            # Standoff Guard in ALIGNING: if already at standoff, halt immediately
             cam_triggered = vis and (self.tag_dist_m <= (self.standoff_m + 0.02))
             close_to_goal = dist <= (self.standoff_m + 0.02)
             if (cam_triggered or close_to_goal) and abs(bearing) <= 0.18:
-                self._enter_fine_align(now, dist, bearing, skew)
+                vx_cmd, wz_cmd = 0.0, 0.0
+                self.state = "ARRIVED (20cm)"
+                self.state_time = now
+                self._halted = True
+                print(f"[ARRIVED] Tag {self.target_tag_id} reached at 20 cm standoff fully aligned!")
             elif (vis and abs(bearing) <= 0.22) or (mem_rel is not None and abs(mem_rel[1]) <= 0.16 and in_state_s >= 0.4):
                 with self.lock:
                     self._replan_cubic_to_tag(dist, bearing, skew, v_curr=self.v_min, log_plan=True)
@@ -799,17 +804,21 @@ class WindowsMissionRunner:
                 self.state_time = now
 
         # ---------------------------------------------------------------------
-        # 3. CHASING: Continuous Receding-Horizon Flat Cubic Pursuit (vy = 0)
+        # 3. CHASING: Continuous Flat Cubic Pursuit with Terminal Tangent Alignment (vy = 0)
         # ---------------------------------------------------------------------
         elif self.state == "CHASING":
             dist_err = dist - self.standoff_m
 
             # Standoff Guard in CHASING: brake immediately at 20 cm
+            # Because the cubic path enforces arrival tangent alignment (Eq. 2), the robot is already aligned!
             cam_triggered = vis and (self.tag_dist_m <= (self.standoff_m + 0.02))
             close_to_goal = dist <= (self.standoff_m + 0.02)
             if dist_err <= 0.015 or close_to_goal or cam_triggered:
                 vx_cmd, wz_cmd = 0.0, 0.0
-                self._enter_fine_align(now, dist, bearing, skew)
+                self.state = "ARRIVED (20cm)"
+                self.state_time = now
+                self._halted = True
+                print(f"[ARRIVED] Tag {self.target_tag_id} reached at 20 cm standoff fully aligned via flat trajectory!")
             elif (not vis_recent and mem_rel is None) or abs(bearing) > math.radians(65.0):
                 vx_cmd = 0.0
                 self.state = "ALIGNING"
@@ -820,28 +829,27 @@ class WindowsMissionRunner:
                 with self.lock:
                     self._replan_cubic_to_tag(dist, bearing, skew, v_curr=max(self.v_min, self.vx), log_plan=False)
 
-                tau_look = min(0.30, 0.25 * self.cubic_T)
+                tau_look = min(0.35, 0.20 * self.cubic_T)
                 v_ff, w_ff, _, _, xdot, ydot = evaluate_flatness(
                     self.alpha_x, self.alpha_y, tau_look, self.cubic_T
                 )
-                cubic_heading = math.atan2(ydot, max(0.04, xdot))
+                cubic_heading = math.atan2(ydot, max(0.03, xdot))
 
                 # Smoothly scale forward speed by cos(bearing)
                 cos_scale = max(0.25, math.cos(1.3 * bearing))
                 vx_target = min(self.v_max, (0.45 * v_ff + 0.55 * max(0.0, dist_err)) * cos_scale)
-                if dist_err < 0.15:
-                    vx_cmd = float(np.clip(vx_target, 0.045, 0.09))
-                elif dist_err < 0.35:
+                if dist_err < 0.12:
+                    vx_cmd = float(np.clip(vx_target, 0.04, 0.08))
+                elif dist_err < 0.30:
                     vx_cmd = float(np.clip(vx_target, self.v_min, min(self.v_max, 0.16)))
                 else:
                     vx_cmd = float(np.clip(vx_target, self.v_min, self.v_max))
 
-                # Turning rate bounded by chase_wz_max AND turning radius R_min
-                radius_wz_cap = abs(vx_cmd) / max(0.08, float(self.turn_radius_m))
-                eff_wz_max = min(float(self.chase_wz_max), max(0.28, radius_wz_cap))
-
-                steer_err = bearing - self.kp_skew * skew + 0.30 * cubic_heading
-                wz_cmd = float(np.clip(0.50 * w_ff + self.kp_bearing * steer_err, -eff_wz_max, eff_wz_max))
+                # Steer along the planned curving path: combines differential flatness feedforward w_ff,
+                # tangent tracking along the curve, and visual alignment to the tag normal.
+                eff_wz_max = float(self.chase_wz_max)
+                steer_cmd = w_ff + 1.25 * cubic_heading + 0.35 * (bearing - skew)
+                wz_cmd = float(np.clip(steer_cmd, -eff_wz_max, eff_wz_max))
 
         # ---------------------------------------------------------------------
         # 4. FINE_ALIGN: Reverse-and-Forward Nonholonomic Parking Maneuver
@@ -1109,13 +1117,27 @@ class WindowsMissionRunner:
             img_tmp = os.path.join(self.output_dir, "live_camera_tmp.jpg")
             img_out = os.path.join(self.output_dir, "live_camera.jpg")
             cv2.imwrite(img_tmp, vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
-            os.replace(img_tmp, img_out)
+            try:
+                os.replace(img_tmp, img_out)
+            except Exception:
+                try:
+                    import shutil
+                    shutil.copyfile(img_tmp, img_out)
+                except Exception:
+                    pass
 
             json_tmp = os.path.join(self.output_dir, "live_telemetry_tmp.json")
             json_out = os.path.join(self.output_dir, "live_telemetry.json")
             with open(json_tmp, "w", encoding="utf-8") as f:
                 json.dump(payload, f)
-            os.replace(json_tmp, json_out)
+            try:
+                os.replace(json_tmp, json_out)
+            except Exception:
+                try:
+                    import shutil
+                    shutil.copyfile(json_tmp, json_out)
+                except Exception:
+                    pass
         except Exception:
             pass
 

@@ -18,6 +18,7 @@ Provides live, code-free tuning controls:
 
 import os
 import sys
+import io
 import json
 import math
 import time
@@ -723,11 +724,14 @@ class DebugApp:
         # Update Live Camera Frame
         if os.path.exists(IMG_PATH):
             try:
-                pil_img = Image.open(IMG_PATH)
-                if pil_img.size != (380, 214):
-                    pil_img = pil_img.resize((380, 214))
-                self._tk_cam_img = ImageTk.PhotoImage(pil_img)
-                self.cam_label.configure(image=self._tk_cam_img)
+                with open(IMG_PATH, "rb") as f:
+                    raw_data = f.read()
+                if raw_data and len(raw_data) > 500:
+                    pil_img = Image.open(io.BytesIO(raw_data))
+                    if pil_img.size != (380, 214):
+                        pil_img = pil_img.resize((380, 214))
+                    self._tk_cam_img = ImageTk.PhotoImage(pil_img)
+                    self.cam_label.configure(image=self._tk_cam_img)
             except Exception:
                 pass
         else:

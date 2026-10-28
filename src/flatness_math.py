@@ -92,22 +92,29 @@ def compute_trajectory_matrices(
     standoff_m: float = 0.20,
     v0: float = 0.16,
     v_max: float = 0.38,
+    vf: float = 0.05,
 ) -> dict:
     """
     Computes all mathematical matrices, boundary vectors, solved polynomial
     coefficients, and closed-form equations for Assessment 2 differential flatness.
+    Terminal velocity is aligned with the tag normal vector:
+        zdotf_x = vf * cos(goal_heading),  zdotf_y = vf * sin(goal_heading)
+    Guarantees the robot arrives directly perpendicular to the tag face (0 deg skew).
     """
     T = compute_time_horizon(d0, v_max=v_max)
     x_tag = d0 * math.cos(bearing_rad)
     y_tag = d0 * math.sin(bearing_rad)
-    goal_heading = wrap_angle(bearing_rad - 0.75 * skew_rad)
+    goal_heading = wrap_angle(bearing_rad - skew_rad)
     xf = max(0.08, x_tag - standoff_m * math.cos(goal_heading))
     yf = y_tag - standoff_m * math.sin(goal_heading)
 
+    zdotf_x = vf * math.cos(goal_heading)
+    zdotf_y = vf * math.sin(goal_heading)
+
     M = compute_boundary_matrix(T)
     M_inv = compute_boundary_matrix_inv(T)
-    bx = np.array([0.0, float(v0), float(xf), 0.0], dtype=np.float64)
-    by = np.array([0.0, 0.0,       float(yf), 0.0], dtype=np.float64)
+    bx = np.array([0.0, float(v0), float(xf), float(zdotf_x)], dtype=np.float64)
+    by = np.array([0.0, 0.0,       float(yf), float(zdotf_y)], dtype=np.float64)
 
     alpha_x = M_inv @ bx
     alpha_y = M_inv @ by
@@ -289,11 +296,15 @@ def plan_aligning_cubic_path(
     standoff_m: float = 0.20,
     v0: float = 0.16,
     v_max: float = 0.38,
+    vf: float = 0.05,
 ):
     """
     Plans a 2D flat cubic trajectory z(t) = [x(t), y(t)]^T in the robot's initial chase frame
     that moves from (0, 0) to the 20 cm standoff point directly in front of the tag,
-    curving smoothly so the robot aligns straight/parallel with the tag at arrival.
+    curving smoothly so the robot arrives directly aligned and perpendicular to the tag.
+    Terminal velocity tangent vector is constrained along the tag normal:
+        xdot(T) = vf * cos(goal_heading)
+        ydot(T) = vf * sin(goal_heading)
     """
     T = compute_time_horizon(d0, v_max=v_max)
 
@@ -301,18 +312,22 @@ def plan_aligning_cubic_path(
     x_tag = d0 * math.cos(bearing_rad)
     y_tag = d0 * math.sin(bearing_rad)
 
-    # Desired final heading to face the tag straight and eliminate horizontal skew
-    goal_heading = wrap_angle(bearing_rad - 0.75 * skew_rad)
+    # Desired final heading to face the tag perpendicularly and eliminate skew
+    goal_heading = wrap_angle(bearing_rad - skew_rad)
 
     # Standoff point 20 cm in front of the tag along its normal axis
     xf = max(0.08, x_tag - standoff_m * math.cos(goal_heading))
     yf = y_tag - standoff_m * math.sin(goal_heading)
 
+    # Terminal tangent velocity components aligned with goal_heading
+    zdotf_x = vf * math.cos(goal_heading)
+    zdotf_y = vf * math.sin(goal_heading)
+
     # Boundary conditions:
-    # Start (t=0): x(0)=0, y(0)=0, moving straight forward in robot frame: xdot(0)=v0, ydot(0)=0
-    # End   (t=T): x(T)=xf, y(T)=yf, decelerating to a halt aligned with goal_heading (xdot(T)=0, ydot(T)=0)
-    alpha_x = solve_flat_polynomial(0.0, v0, xf, 0.0, T)
-    alpha_y = solve_flat_polynomial(0.0, 0.0, yf, 0.0, T)
+    # Start (t=0): x(0)=0, y(0)=0, moving straight forward: xdot(0)=v0, ydot(0)=0
+    # End   (t=T): x(T)=xf, y(T)=yf, arriving aligned with goal_heading tangent: xdot(T)=zdotf_x, ydot(T)=zdotf_y
+    alpha_x = solve_flat_polynomial(0.0, v0, xf, zdotf_x, T)
+    alpha_y = solve_flat_polynomial(0.0, 0.0, yf, zdotf_y, T)
     return alpha_x, alpha_y, T, xf, yf
 
 

@@ -6,8 +6,9 @@ This directory maintains complete telemetry archives, generated figures, solved 
 
 | Run ID | Target | Initial Dist | Final Standoff | Duration | Peak Speed | Solved Cubic Equation $x(t)$ | Matrices & Coefficients | 2D Path Map | Velocity & Voltage | Telemetry Data |
 | :--- | :---: | :---: | :---: | :---: | :---: | :--- | :---: | :---: | :---: | :---: |
-| **run_01_tag3_hardware** | Tag 3 | 1.50 m | **0.199 m** | 29.6 s | 0.280 m/s | `x(t) = +0.0000 +0.0600*t +0.1082*t^2 -0.0139*t^3` | [View Matrices & Equations](./run_01_tag3_hardware/trajectory_and_matrices.txt) | [View 2D Map](./run_01_tag3_hardware/path_2d_planned_vs_actual.png) | [View Velocity Plot](./run_01_tag3_hardware/velocity_and_voltage_profile.png) | [CSV Data](./run_01_tag3_hardware/) |
+| **run_01_tag3_hardware** | Tag 3 | 1.50 m | **0.186 m** | 42.4 s | 0.365 m/s | `x(t) = +0.0000 +0.0600*t +0.0991*t^2 -0.0122*t^3` | [View Matrices & Equations](./run_01_tag3_hardware/trajectory_and_matrices.txt) | [View 2D Map](./run_01_tag3_hardware/path_2d_planned_vs_actual.png) | [View Velocity Plot](./run_01_tag3_hardware/velocity_and_voltage_profile.png) | [CSV Data](./run_01_tag3_hardware/) |
 | **run_20261028_112335_tag3** | Tag 3 | 1.50 m | **0.206 m** | 28.0 s | 0.280 m/s | `x(t) = +0.0000 +0.0800*t -0.0260*t^2 +0.0027*t^3` | [View Matrices & Equations](./run_20261028_112335_tag3/trajectory_and_matrices.txt) | [View 2D Map](./run_20261028_112335_tag3/path_2d_planned_vs_actual.png) | [View Velocity Plot](./run_20261028_112335_tag3/velocity_and_voltage_profile.png) | [CSV Data](./run_20261028_112335_tag3/) |
+| **run_20261028_120548_tag3** | Tag 3 | 1.50 m | **0.220 m** | 29.1 s | 0.280 m/s | `x(t) = +0.0000 +0.0800*t -0.0453*t^2 +0.0101*t^3` | [View Matrices & Equations](./run_20261028_120548_tag3/trajectory_and_matrices.txt) | [View 2D Map](./run_20261028_120548_tag3/path_2d_planned_vs_actual.png) | [View Velocity Plot](./run_20261028_120548_tag3/velocity_and_voltage_profile.png) | [CSV Data](./run_20261028_120548_tag3/) |
 
 ---
 ## Mathematical Trajectory & Matrix Formulation
