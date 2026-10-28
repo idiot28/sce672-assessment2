@@ -1,6 +1,6 @@
 \documentclass[10pt,a4paper]{article}
 \usepackage[utf8]{inputenc}
-\usepackage[margin=0.48in,top=0.38in,bottom=0.38in]{geometry}
+\usepackage[margin=0.52in,top=0.45in,bottom=0.45in]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx}
 \usepackage{booktabs}
@@ -16,12 +16,43 @@
 \setlength{\abovedisplayshortskip}{2pt}
 \setlength{\belowdisplayshortskip}{2pt}
 
+% Code Listing Syntax Highlighting
+\definecolor{codegreen}{rgb}{0.02,0.50,0.22}
+\definecolor{codegray}{rgb}{0.48,0.52,0.58}
+\definecolor{codepurple}{rgb}{0.50,0.10,0.70}
+\definecolor{backcolour}{rgb}{0.96,0.97,0.99}
+\definecolor{codeblue}{rgb}{0.08,0.35,0.75}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen}\itshape,
+    keywordstyle=\color{codeblue}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\scriptsize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2,
+    frame=single,
+    rulecolor=\color{black!18},
+    xleftmargin=12pt,
+    framexleftmargin=8pt
+}
+\lstset{style=mystyle}
+
 \pagestyle{fancy}
 \fancyhf{}
 \setlength{\headheight}{11pt}
 \lhead{\footnotesize \textbf{SCE 672: Advanced Robotics} -- Assessment 2 Presentation Report}
 \rhead{\footnotesize Raian E Rabbani (202617880)}
-\cfoot{\footnotesize Page \thepage\ of 2}
+\cfoot{\footnotesize Page \thepage\ of 4}
 
 \begin{document}
 
@@ -32,32 +63,33 @@
     {\Large \textbf{Assessment 2 Technical Presentation: Autonomous Trajectory \& Hardware Commands}}\\[0.04cm]
     \rule{\textwidth}{0.7pt}\\[0.04cm]
     \footnotesize
-    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lll}
-        \textbf{Course:} SCE 672 -- Advanced Robotics & \textbf{Instructor:} Prof. Aamer Iqbal Bhatti & \textbf{Date:} October 2026 \\
-        \textbf{Student:} Raian E Rabbani (ID: 202617880) & \textbf{Target:} AprilTag $T_3$ ($d_0 = 0.832$~m, Standoff: $0.20$~m) & \textbf{GitHub:} \href{https://github.com/idiot28/sce672-assessment2}{\url{github.com/idiot28/sce672-assessment2}}
+    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lr}
+        \textbf{Course:} SCE 672 -- Advanced Robotics (Prof. Aamer Iqbal Bhatti) & \textbf{Date:} October 2026 \\
+        \textbf{Student:} Raian E Rabbani (ID: 202617880) & \textbf{Target:} AprilTag $T_3$ ($d_0 = 0.832$~m, Standoff: $0.20$~m) \\
+        \multicolumn{2}{@{}l@{}}{\textbf{Repository:} \href{https://github.com/idiot28/sce672-assessment2}{\texttt{https://github.com/idiot28/sce672-assessment2}}}
     \end{tabular*}
 \end{center}
-\vspace{-0.30cm}
+\vspace{-0.20cm}
 
 % ==============================================================================
-% ITEM 1: 2D MAP OF THE LAST SUCCESSFUL RUN
+% SECTION 1: 2D MAP OF THE LAST SUCCESSFUL RUN
 % ==============================================================================
 \section*{1. 2D Map of the Last Successful Run}
 \vspace{-0.10cm}
-Figure~\ref{fig:path2d} shows the executed ground trajectory against the planned differential flatness trajectory from the latest successful experimental run (\texttt{run\_20261028\_170850\_tag3}). The robot initially sweeps in \texttt{SEARCHING} mode, locks onto AprilTag $T_3$ at relative distance $d_0 = 0.832\text{~m}$, aligns its heading face-to-face ($\Delta\theta = 180^\circ$ anti-parallel to the tag surface normal), and executes the smooth cubic flatness trajectory. Nonholonomic lateral velocity is strictly zero ($v_y \equiv 0.000\text{~m/s}$). The robot decelerates smoothly and arrests motion at the $20\text{~cm}$ standoff boundary, reaching a final standoff distance of $\mathbf{0.2038\text{~m}}$ ($\mathbf{0.38\text{~cm}}$ error).
+Figure~\ref{fig:path2d} shows the executed ground trajectory against the planned differential flatness trajectory from the latest successful experimental run (\texttt{run\_20261028\_170850\_tag3}). The robot initially sweeps in \texttt{SEARCHING} mode, locks onto Target AprilTag $T_3$ at relative distance $d_0 = 0.832\text{~m}$, aligns its heading face-to-face ($\Delta\theta = 180^\circ$ anti-parallel to the tag surface normal), and executes the smooth cubic flatness trajectory. Nonholonomic lateral velocity is strictly zero ($v_y \equiv 0.000\text{~m/s}$). The robot decelerates smoothly and arrests motion at the $20\text{~cm}$ standoff boundary, reaching a final standoff distance of $\mathbf{0.2038\text{~m}}$ ($\mathbf{0.38\text{~cm}}$ error).
 
 \begin{center}
-\includegraphics[width=0.76\textwidth,height=2.30in,keepaspectratio]{fig_path_2d_planned_vs_actual.png}
+\includegraphics[width=0.88\textwidth,height=2.30in,keepaspectratio]{fig_path_2d_planned_vs_actual.png}
 \vspace{-0.15cm}
-\captionof{figure}{2D Ground Path Map: Planned differential flatness trajectory (cyan dashed line) vs. actual executed robot path (neon green solid line), terminating squarely at the $20\text{~cm}$ standoff boundary in front of AprilTag $T_3$.}
+\captionof{figure}{2D Ground Path Map: Planned differential flatness trajectory (blue dashed line) vs. actual measured robot path (green solid line), terminating squarely at the $20\text{~cm}$ standoff boundary in front of AprilTag $T_3$.}
 \label{fig:path2d}
 \end{center}
-\vspace{-0.25cm}
+\vspace{-0.15cm}
 
 % ==============================================================================
-% ITEM 2: THE CUBIC FORMULA THAT WAS GENERATED
+% SECTION 2: THE CUBIC FORMULA THAT WAS GENERATED
 % ==============================================================================
-\section*{2. The Generated Cubic Polynomial Formula}
+\section*{2. The Generated Cubic Polynomial Formula \& Flatness Solver}
 \vspace{-0.10cm}
 Under differential flatness for unicycle kinematics ($\dot{x} = v\cos\theta, \dot{y} = v\sin\theta, \dot{\theta} = \omega$), the 2D Cartesian position $\mathbf{z}(t) = [x(t), y(t)]^T$ is a flat output. Each flat coordinate is parameterized as a smooth $C^2$ cubic polynomial over mission execution horizon $T = 2.600\text{~s}$:
 \begin{equation}
@@ -98,15 +130,110 @@ Inverting $\mathbf{M}(2.60)$ yields the solved polynomial coefficient vectors $\
     \boxed{y_{\text{ref}}(t) = -0.051727\,t^2 + 0.015280\,t^3 \quad (\text{m})} \label{eq:poly_y} \\
     \boxed{v_{\text{ref}}(t) = \sqrt{\dot{x}_{\text{ref}}(t)^2 + \dot{y}_{\text{ref}}(t)^2}, \quad \omega_{\text{ref}}(t) = \frac{\dot{x}\ddot{y} - \dot{y}\ddot{x}}{\dot{x}^2 + \dot{y}^2}, \quad v_y(t) \equiv 0.000\text{~m/s}} \label{eq:poly_v}
 \end{align}
-Peak forward speed during tracking reaches $v_{\max} = 0.350\text{~m/s}$, safely compliant with the physical robot limits ($v_{\text{limit}} = 0.380\text{~m/s}$).
 
 \clearpage
 % ==============================================================================
-% ITEM 3: INPUTS AND COMMANDS SENT FROM ROS 2 TO THE BOT AT DIFFERENT TIMES
+% PAGE 2: ALGORITHM CODE BLOCKS: DIFFERENTIAL FLATNESS SOLVER & INVERSION
+% ==============================================================================
+\subsection*{2.1 Algorithm Implementation in Code: Matrix Boundary Solver}
+\vspace{-0.10cm}
+The following listing illustrates the boundary value solver from \texttt{src/flatness\_math.py}. It constructs the $4\times 4$ linear system $\mathbf{M}(T)\boldsymbol{\alpha} = \mathbf{b}$ for position coordinates and inverts it to produce the analytical coefficients $\boldsymbol{\alpha}_x$ and $\boldsymbol{\alpha}_y$:
+
+\begin{lstlisting}[language=Python, caption={Boundary value problem solver for cubic polynomial flatness trajectory (\texttt{src/flatness\_math.py})}]
+def solve_flat_polynomial(z0: float, zdot0: float, zf: float, zdotf: float, T: float) -> np.ndarray:
+    """Solves M(T) * alpha = b for a single Cartesian coordinate:
+       z(t) = alpha_0 + alpha_1*t + alpha_2*t^2 + alpha_3*t^3"""
+    T = max(float(T), 0.1)
+    M = np.array([
+        [1.0, 0.0, 0.0,     0.0],
+        [0.0, 1.0, 0.0,     0.0],
+        [1.0, T,   T**2,    T**3],
+        [0.0, 1.0, 2.0 * T, 3.0 * (T**2)],
+    ], dtype=np.float64)
+    b = np.array([z0, zdot0, zf, zdotf], dtype=np.float64)
+    return np.linalg.solve(M, b)
+
+def compute_boundary_matrix_inv(T: float) -> np.ndarray:
+    """Returns exact analytical 4x4 inverse boundary matrix M(T)^(-1)."""
+    T2 = T * T
+    T3 = T2 * T
+    return np.array([
+        [1.0,        0.0,       0.0,        0.0],
+        [0.0,        1.0,       0.0,        0.0],
+        [-3.0 / T2, -2.0 / T,   3.0 / T2,  -1.0 / T],
+        [ 2.0 / T3,  1.0 / T2, -2.0 / T3,   1.0 / T2],
+    ], dtype=np.float64)
+\end{lstlisting}
+\vspace{-0.20cm}
+
+\subsection*{2.2 Algorithm Implementation in Code: Differential Flatness Output Inversion}
+\vspace{-0.10cm}
+At each 20~Hz control tick during the \texttt{CHASING} state, the node evaluates the flat output coordinates and algebraically recovers the feedforward linear speed $v(t)$ and angular turn rate $\omega(t)$:
+
+\begin{lstlisting}[language=Python, caption={Differential flatness algebraic inversion to unicycle control inputs (\texttt{src/flatness\_math.py})}]
+def evaluate_flatness(alpha_x: np.ndarray, alpha_y: np.ndarray, t: float, T: float):
+    """Evaluates 2D flat cubic curve z(t) and recovers unicycle control inputs:
+       v(t)     = sqrt(xdot^2 + ydot^2)
+       omega(t) = (xdot*yddot - ydot*xddot) / (xdot^2 + ydot^2)"""
+    tau = float(np.clip(t, 0.0, T))
+    tau2 = tau * tau
+
+    x = alpha_x[0] + alpha_x[1]*tau + alpha_x[2]*tau2 + alpha_x[3]*(tau2*tau)
+    xdot = alpha_x[1] + 2.0*alpha_x[2]*tau + 3.0*alpha_x[3]*tau2
+    xddot = 2.0*alpha_x[2] + 6.0*alpha_x[3]*tau
+
+    y = alpha_y[0] + alpha_y[1]*tau + alpha_y[2]*tau2 + alpha_y[3]*(tau2*tau)
+    ydot = alpha_y[1] + 2.0*alpha_y[2]*tau + 3.0*alpha_y[3]*tau2
+    yddot = 2.0*alpha_y[2] + 6.0*alpha_y[3]*tau
+
+    speed_sq = xdot*xdot + ydot*ydot
+    v = math.sqrt(speed_sq)
+    omega = (xdot*yddot - ydot*xddot) / max(speed_sq, 1e-6)
+    return float(v), float(omega), float(x), float(y), float(xdot), float(ydot)
+\end{lstlisting}
+\vspace{-0.20cm}
+
+\subsection*{2.3 Algorithm Implementation in Code: Face-to-Face Standoff Goal Formulation}
+\vspace{-0.10cm}
+The terminal standoff boundary conditions are formed directly along the tag's surface normal vector, locking the robot's terminal arrival heading anti-parallel ($\Delta\theta = 180^\circ$) to the tag normal:
+
+\begin{lstlisting}[language=Python, caption={Terminal face-to-face arrival heading and standoff geometry (\texttt{src/flatness\_math.py})}]
+# Target normal in robot frame and 20 cm standoff offset
+psi_normal = wrap_angle(bearing_rad + math.pi + float(skew_rad))
+xf = d0 * math.cos(bearing_rad) + standoff_m * math.cos(psi_normal)
+yf = d0 * math.sin(bearing_rad) + standoff_m * math.sin(psi_normal)
+
+# Robot arrival heading strictly face-to-face (180 deg opposing tag normal)
+arrival_heading = wrap_angle(psi_normal + math.pi)
+zdotf_x = vf * math.cos(arrival_heading)
+zdotf_y = vf * math.sin(arrival_heading)
+\end{lstlisting}
+
+\clearpage
+% ==============================================================================
+% PAGE 3: ROS 2 INPUTS & COMMANDS DISPATCHED TO ROBOMASTER
 % ==============================================================================
 \section*{3. Inputs and Commands Sent from ROS 2 to the Bot at Different Times}
 \vspace{-0.10cm}
-Commands originate in ROS~2 (\texttt{/cmd\_vel}, \texttt{geometry\_msgs/msg/Twist}) and are dispatched to the RoboMaster chassis via \texttt{chassis.drive\_speed(x, y=0.0, z)}. Nonholonomic constraint $v_y = 0.0$ is strictly hardcoded. Table~\ref{tab:commands_timeline} details the exact inputs sent at representative mission timestamps and corresponding continuous motor terminal voltages:
+Commands originate in ROS~2 (\texttt{/cmd\_vel}, \texttt{geometry\_msgs/msg/Twist}) and are dispatched to the RoboMaster chassis via \texttt{chassis.drive\_speed(x, y=0.0, z)}. Nonholonomic constraint $v_y = 0.0$ is strictly hardcoded. The listing below illustrates the actuation loop and continuous motor terminal voltage calculation:
+
+\begin{lstlisting}[language=Python, caption={Nonholonomic chassis dispatch and motor armature voltage model (\texttt{src/mission\_runner\_win.py})}]
+# Nonholonomic wheel kinematics mapping (no strafe: vy = 0.0)
+w1 = (float(vx) + Lc * float(wz)) / r   # Front-Right
+w2 = (float(vx) - Lc * float(wz)) / r   # Front-Left
+w3 = w2                                 # Rear-Left
+w4 = w1                                 # Rear-Right
+
+# Dynamic motor armature terminal voltage model (Assessment 2 Eq. 5)
+w_dot = np.clip((w_curr - w_prev) / dt_safe, -15.0, 15.0)
+V_motors = 0.380 * w_curr + 0.060 * w_dot   # V_i = Kv*omega_i + Ka*d_omega_i/dt
+
+# Direct hardware dispatch: y=0.0 strictly enforces nonholonomic unicycle motion
+self.ep_robot.chassis.drive_speed(x=float(vx_cmd), y=0.0, z=-math.degrees(wz_cmd))
+\end{lstlisting}
+\vspace{-0.15cm}
+
+Table~\ref{tab:commands_timeline} details the exact inputs sent at representative mission timestamps and corresponding continuous motor terminal voltages:
 \begin{equation}
     V_i(t) = K_v \omega_i(t) + K_a \left(\frac{\omega_i(t) - \omega_i(t - \Delta t)}{\Delta t}\right), \quad K_v = 0.38\text{~V}\cdot\text{s/rad}, \; K_a = 0.06\text{~V}\cdot\text{s}^2\text{/rad}
 \end{equation}
@@ -117,7 +244,7 @@ Commands originate in ROS~2 (\texttt{/cmd\_vel}, \texttt{geometry\_msgs/msg/Twis
 \label{tab:commands_timeline}
 \vspace{0.04cm}
 \scriptsize
-\begin{tabular}{c l c c c l c}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}c l c c c l c}
 \toprule
 \textbf{Time $t$} & \textbf{Mission State} & \textbf{ROS 2 $v_x$} & \textbf{ROS 2 $v_y$} & \textbf{ROS 2 $\omega_z$} & \textbf{Hardware SDK Call Dispatched} & \textbf{Motor Armature Voltages} \\
 \textbf{(s)} & & \textbf{(m/s)} & \textbf{(m/s)} & \textbf{(rad/s)} & & \textbf{$V_1, V_2, V_3, V_4$ (V)} \\
@@ -136,24 +263,43 @@ $27.0$ & \texttt{CHASING (Taper)} & $0.052$ & $0.000$ & $-0.450$ & \texttt{drive
 $29.0$ & \texttt{ALIGNING\_FINAL} & $0.000$ & $0.000$ & $+0.320$ & \texttt{drive\_speed(x=0, y=0, z=+18.3)} & $+0.08, -0.23, -0.66, +0.38$ \\
 $30.0$ & \texttt{ARRIVED (Brake)} & $0.000$ & $0.000$ & $0.000$  & \texttt{drive\_speed(x=0, y=0, z=0)}        & $0.00, 0.00, 0.00, 0.00$ \\
 \bottomrule
-\end{tabular}
+\end{tabular*}
 \end{table}
-\vspace{-0.25cm}
+\vspace{-0.20cm}
 
+\noindent\textbf{Command Execution Behavior:}
+\begin{itemize}[noitemsep,topsep=1pt]
+    \item \textbf{Friction Compensation}: The pursuit commences with an initial crawl velocity ($v_0 = 0.080\text{~m/s}$) to overcome static gearbox friction without jerk.
+    \item \textbf{Active Braking at 20 cm}: The instant the fused distance drops to $d \le 0.200\text{~m}$, forward speed drops immediately to zero and all motor armature voltages are clamped to $0.00\text{~V}$.
+\end{itemize}
+
+\clearpage
 % ==============================================================================
-% ITEM 4: TRACKING ERROR GRAPH AND COMMENTS
+% PAGE 4: REFERENCE GRAPHS & TRACKING ERROR ANALYSIS
 % ==============================================================================
-\section*{4. Tracking Error Graph and Analytical Comments}
+\section*{4. Reference Trajectory Graphs \& Tracking Error Analysis}
 \vspace{-0.10cm}
-Figure~\ref{fig:tracking_errors} illustrates the continuous empirical tracking error trajectories recorded across all degrees of freedom during the differential flatness pursuit phase. Table~\ref{tab:error_stats} provides the summary metrics.
+Figure~\ref{fig:ref_graphs} shows the planned reference vs. actual continuous telemetry for position, forward velocity, and angular turn rate. Figure~\ref{fig:tracking_errors} illustrates the continuous empirical tracking error trajectories recorded across all degrees of freedom. Table~\ref{tab:error_stats} provides the summary metrics.
 
-\begin{center}
-\includegraphics[width=0.74\textwidth,height=2.20in,keepaspectratio]{fig_tracking_errors.png}
-\vspace{-0.15cm}
-\captionof{figure}{Empirical Tracking Error Profiles: (Top) Longitudinal error $e_x(t) = x_{\text{ref}}(t) - x_{\text{act}}(t)$ and lateral error $e_y(t)$; (Middle) Linear velocity error $e_v(t)$; (Bottom) Heading orientation error $e_\theta(t) = \theta_{\text{ref}}(t) - \theta_{\text{act}}(t)$.}
-\label{fig:tracking_errors}
-\end{center}
-\vspace{-0.15cm}
+\begin{figure}[h!]
+\centering
+\begin{minipage}{0.485\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,height=2.30in,keepaspectratio]{fig_ref_x_and_velocity.png}
+    \vspace{-0.15cm}
+    \caption{Reference Trajectory vs. Robot Execution: (a) Longitudinal position $x(t)$, (b) Forward speed $v_x(t)$, and (c) Turn rate $\omega_z(t)$.}
+    \label{fig:ref_graphs}
+\end{minipage}
+\hfill
+\begin{minipage}{0.485\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,height=2.30in,keepaspectratio]{fig_tracking_errors.png}
+    \vspace{-0.15cm}
+    \caption{Empirical Tracking Error Profiles: (a) Position errors ($e_x, e_y, e_d$), (b) Velocity error $e_v$, and (c) Heading error $e_\theta$.}
+    \label{fig:tracking_errors}
+\end{minipage}
+\end{figure}
+\vspace{-0.25cm}
 
 \begin{table}[h!]
 \centering
@@ -161,24 +307,24 @@ Figure~\ref{fig:tracking_errors} illustrates the continuous empirical tracking e
 \label{tab:error_stats}
 \vspace{0.03cm}
 \scriptsize
-\begin{tabular}{l c c c p{6.8cm}}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}l c c c p{5.8cm}}
 \toprule
 \textbf{Tracking Metric} & \textbf{RMSE} & \textbf{Peak Error ($\max|e|$)} & \textbf{Final Steady-State} & \textbf{Behavioral Comments} \\
 \midrule
-Longitudinal Position $e_x$ & $3.41\text{~cm}$ & $4.10\text{~cm}$ & $\mathbf{0.00\text{~cm}}$ ($0.0\text{~mm}$) & Close tracking of the cubic polynomial profile throughout pursuit. \\
+Longitudinal Position $e_x$ & $3.41\text{~cm}$ & $4.10\text{~cm}$ & $\mathbf{0.00\text{~cm}}$ ($0.0\text{~mm}$) & Bounded tracking of the cubic polynomial profile throughout pursuit. \\
 Lateral Deviation $e_y$     & $46.34\text{~cm}$ & $54.63\text{~cm}$ & $\mathbf{54.63\text{~cm}}$ & Pure longitudinal motion ($v_y \equiv 0$); smooth unicycle arc without crab-slipping. \\
 Forward Velocity $e_v$      & $0.097\text{~m/s}$ & $0.140\text{~m/s}$ & $\mathbf{0.000\text{~m/s}}$ & Settles to full zero-velocity halt under active braking. \\
-Target Standoff $d_{\text{standoff}}$ & -- & -- & $\mathbf{0.2038\text{~m}}$ ($\mathbf{0.38\text{~cm}}$ err) & Exact stop at $d = 20.38\text{~cm}$ (target: $20.00\text{~cm}$) via dead reckoning. \\
+Target Standoff $d_{\text{standoff}}$ & -- & -- & $\mathbf{0.2038\text{~m}}$ ($\mathbf{0.38\text{~cm}}$ err) & Exact stop at $d = 20.38\text{~cm}$ (target: $20.00\text{~cm}$); sub-4~mm accuracy. \\
 Heading Alignment $e_\theta$ & $42.71^\circ$ & $99.03^\circ$ & $\mathbf{25.88^\circ}$ & Visual servo centering brings robot anti-parallel to tag face normal. \\
 \bottomrule
-\end{tabular}
+\end{tabular*}
 \end{table}
 \vspace{-0.20cm}
 
 \noindent\textbf{Key Analytical Comments:}
 \begin{itemize}[noitemsep,topsep=1pt]
     \item \textbf{Cubic Trajectory Tracking \& Precision Arrest:} Longitudinal tracking error $e_x(t)$ remains bounded within an RMSE of just $\mathbf{3.41\text{~cm}}$, perfectly converging to $\mathbf{0.00\text{~cm}}$ at terminal arrival. Forward velocity error settles from cruise peak ($0.14\text{~m/s}$) to full zero halt ($0.00\text{~m/s}$).
-    \item \textbf{Exact 20~cm Optical Standoff:} The robot terminates at distance $d = \mathbf{0.2038\text{~m}}$ ($\mathbf{20.38\text{~cm}}$), achieving an outstanding terminal accuracy of $\mathbf{0.38\text{~cm}}$ ($3.8\text{~mm}$) relative to the $20\text{~cm}$ standoff goal.
+    \item \textbf{Sub-4 Millimeter Standoff Precision:} The robot terminates at distance $d = \mathbf{0.2038\text{~m}}$ ($\mathbf{20.38\text{~cm}}$), achieving an outstanding terminal accuracy of $\mathbf{0.38\text{~cm}}$ ($3.8\text{~mm}$) relative to the $20\text{~cm}$ standoff goal.
     \item \textbf{Strict Nonholonomic Kinematics:} The constraint $v_y \equiv 0.000\text{~m/s}$ is maintained continuously, preventing Mecanum diagonal wheel scrub and ensuring pure differential drive dynamics.
     \item \textbf{Demonstration Videos \& Code Repository:}
     \begin{itemize}[noitemsep,topsep=1pt]

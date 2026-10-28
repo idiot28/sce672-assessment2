@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-plot_presentation_figures.py
-Generates presentation-grade reference vs actual and tracking error figures
-for the SCE 672 Assessment 2 report presentation.
+plot_presentation_figures.py - Generates Publication-Quality Presentation Figures
+==================================================================================
+Produces clean, unblocked, non-overlapping figures for the Assessment 2 presentation:
+  1. fig_path_2d_planned_vs_actual.png (2D ground path map: planned vs measured)
+  2. fig_ref_x_and_velocity.png (Reference vs actual for position, speed, and turn rate)
+  3. fig_tracking_errors.png (Empirical tracking errors across all degrees of freedom)
 """
 
 import os
@@ -19,15 +22,15 @@ import matplotlib.pyplot as plt
 plt.rcParams.update({
     "font.family": "serif",
     "font.size": 10,
-    "axes.labelsize": 11,
+    "axes.labelsize": 10.5,
     "axes.titlesize": 11,
-    "legend.fontsize": 9,
+    "legend.fontsize": 8.5,
     "xtick.labelsize": 9,
     "ytick.labelsize": 9,
-    "figure.titlesize": 13,
+    "figure.titlesize": 12,
     "figure.autolayout": False,
     "lines.linewidth": 1.8,
-    "grid.alpha": 0.45,
+    "grid.alpha": 0.35,
     "grid.linestyle": "--",
 })
 
@@ -83,8 +86,6 @@ ay = np.array(t_meta.get("coefficients_alpha_y", [0.0, 0.00, -0.0517, 0.0153]))
 T_s = float(t_meta.get("T_s", 2.60))
 
 # Reference polynomial evaluations over pursuit duration
-# Map tau smoothly over active pursuit phase
-t_active = t_rel[t_rel <= (T_s + 0.5)]
 tau = np.clip(t_rel, 0.0, T_s)
 
 x_ref_raw = ax[0] + ax[1]*tau + ax[2]*(tau**2) + ax[3]*(tau**3)
@@ -126,108 +127,171 @@ max_e_d = np.max(e_d)
 final_d_err = abs(dist_act[-1] - 0.20)
 
 print(f"Tracking Statistics:")
-print(f"  RMSE Position: {rmse_d*100:.2f} cm")
+print(f"  RMSE Position: {rmse_d*100:.2f} cm (x: {rmse_x*100:.2f} cm, y: {rmse_y*100:.2f} cm)")
 print(f"  RMSE Velocity: {rmse_v:.3f} m/s")
 print(f"  Max Pos Error: {max_e_d*100:.2f} cm")
 print(f"  Final Standoff: {dist_act[-1]:.3f} m (Error: {final_d_err*100:.2f} cm)")
 
 # =============================================================================
-# FIGURE 1: Reference vs Actual for Velocity and x
+# FIGURE 1: 2D GROUND PATH MAP (Planned Flat vs Measured Followed)
+# Clean, uncluttered layout: no blocking text boxes, top-mounted legend.
+# =============================================================================
+fig_map, ax_map = plt.subplots(figsize=(7.4, 3.4))
+
+# Compute planned curve for dense plotting
+t_eval = np.linspace(0.0, T_s, 200)
+x_plan_dense = (ax[0] + ax[1]*t_eval + ax[2]*(t_eval**2) + ax[3]*(t_eval**3)) * scale_x
+y_plan_dense = (ay[0] + ay[1]*t_eval + ay[2]*(t_eval**2) + ay[3]*(t_eval**3)) * scale_y
+
+# Goal points
+xf_goal = x_plan_dense[-1]
+yf_goal = y_plan_dense[-1]
+tag_x = xf_goal + 0.20 * np.cos(theta_ref[-1])
+tag_y = yf_goal + 0.20 * np.sin(theta_ref[-1])
+
+# Plot Target Tag & Standoff
+ax_map.plot(tag_x, tag_y, 's', color='#dc2626', markersize=9, markeredgecolor='black', label=f'Target AprilTag T3 Center')
+ax_map.plot(xf_goal, yf_goal, 'X', color='#059669', markersize=9, markeredgecolor='black', label=f'Standoff Goal (20 cm mark)')
+
+# Standoff buffer line
+ax_map.plot([xf_goal, tag_x], [yf_goal, tag_y], color='#ef4444', linestyle=':', lw=2.0, label='20 cm Optical Standoff')
+
+# Planned path (Electric Blue, clean dashed)
+ax_map.plot(x_plan_dense, y_plan_dense, color='#2563eb', lw=2.4, linestyle='--', label=r'Planned Flat Cubic Path $\mathbf{z}(t)$')
+
+# Measured path (Neon Green, solid line with periodic dots)
+ax_map.plot(x_act, y_act, color='#16a34a', lw=2.2, linestyle='-', marker='o', markevery=max(3, len(x_act)//12), markersize=4, label='Measured Traversed Path (Odometry)')
+
+# Robot Start Pose
+ax_map.plot(0.0, 0.0, 'o', color='#0f172a', markersize=8, markeredgecolor='white', label='Robot Start Pose $(0, 0)$')
+
+ax_map.set_xlabel('Longitudinal Displacement $x$ [m]')
+ax_map.set_ylabel('Lateral Displacement $y$ [m]')
+ax_map.set_title('2D Ground Trajectory: Planned Differential Flatness Path vs. Actual Robot Execution', pad=24)
+ax_map.grid(True)
+
+# Padding to avoid edge crowding
+all_x = np.concatenate([[0.0, tag_x, xf_goal], x_plan_dense, x_act])
+all_y = np.concatenate([[0.0, tag_y, yf_goal], y_plan_dense, y_act])
+x_pad = max(0.05, 0.12 * (np.max(all_x) - np.min(all_x)))
+y_pad = max(0.05, 0.20 * (np.max(all_y) - np.min(all_y)))
+ax_map.set_xlim(np.min(all_x) - x_pad, np.max(all_x) + x_pad)
+ax_map.set_ylim(np.min(all_y) - y_pad, np.max(all_y) + y_pad)
+
+# Position legend neatly at the top outside the axes to prevent ANY overlap with data
+ax_map.legend(loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=3, frameon=True, facecolor='#ffffff', edgecolor='#cbd5e1', framealpha=0.95)
+
+plt.tight_layout()
+fig_map_path = os.path.join(REPORT_DIR, "fig_path_2d_planned_vs_actual.png")
+fig_map.savefig(fig_map_path, dpi=300)
+plt.close(fig_map)
+print(f"[+] Saved clean 2D path map: {fig_map_path}")
+
+# =============================================================================
+# FIGURE 2: Reference Trajectory vs Robot Execution (x, v, w)
+# Clean vertical layout with ample spacing and non-colliding legends.
 # =============================================================================
 fig1, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(7.2, 5.6), sharex=True)
-fig1.suptitle("Reference Trajectory vs. Robot Execution (Differential Flatness Pursuit)", fontweight="bold", y=0.98)
+plt.subplots_adjust(hspace=0.32)
 
 # Panel 1: Longitudinal Position x(t)
-ax1.plot(t_rel, x_ref, "b--", label=r"Reference $x_{\mathrm{ref}}(\tau)$ (Flat Cubic)")
-ax1.plot(t_rel, x_act, "g-", label=r"Actual $x_{\mathrm{act}}(t)$ (Odometry)")
+ax1.plot(t_rel, x_ref, color='#2563eb', linestyle='--', lw=2.0, label=r'Reference $x_{\mathrm{ref}}(\tau)$ (Flat Cubic)')
+ax1.plot(t_rel, x_act, color='#16a34a', linestyle='-', lw=1.8, label=r'Actual $x_{\mathrm{act}}(t)$ (Dead Reckoning)')
 ax1.set_ylabel(r"$x$ Position [m]")
-ax1.set_title(r"(a) Longitudinal Position: Flat Reference $x_{\mathrm{ref}}(\tau)$ vs Actual $x(t)$", fontsize=10)
-ax1.legend(loc="lower right", framealpha=0.9)
+ax1.set_title(r"(a) Longitudinal Position: Reference $x_{\mathrm{ref}}(\tau)$ vs Actual $x(t)$", fontsize=10, loc='left')
+ax1.legend(loc="lower right", framealpha=0.92, facecolor='#ffffff', edgecolor='#cbd5e1')
+ax1.set_ylim(min(np.min(x_ref), np.min(x_act)) - 0.05, max(np.max(x_ref), np.max(x_act)) + 0.12)
 ax1.grid(True)
 
 # Panel 2: Forward Velocity v(t)
-ax2.plot(t_rel, v_ref, "b--", label=r"Reference $v_{\mathrm{ref}}(\tau) = \sqrt{\dot{x}^2 + \dot{y}^2}$")
-ax2.plot(t_rel, vx_act, "r-", label=r"Actual Forward Velocity $v_{x}(t)$ ($v_y = 0$)")
+ax2.plot(t_rel, v_ref, color='#2563eb', linestyle='--', lw=2.0, label=r'Reference $v_{\mathrm{ref}}(\tau) = \sqrt{\dot{x}^2 + \dot{y}^2}$')
+ax2.plot(t_rel, vx_act, color='#dc2626', linestyle='-', lw=1.8, label=r'Actual Forward Velocity $v_{x}(t)$ ($v_y \equiv 0$)')
+ax2.axhline(0.38, color='#94a3b8', linestyle=':', lw=1.2, label=r'Chassis Limit $v_{\max} = 0.38$ m/s')
 ax2.set_ylabel("Velocity [m/s]")
-ax2.set_title(r"(b) Forward Velocity: Flat Reference $v_{\mathrm{ref}}(\tau)$ vs Actual $v_x(t)$", fontsize=10)
-ax2.legend(loc="upper right", framealpha=0.9)
+ax2.set_title(r"(b) Forward Velocity: Reference $v_{\mathrm{ref}}(\tau)$ vs Actual $v_x(t)$", fontsize=10, loc='left')
+ax2.legend(loc="upper right", framealpha=0.92, facecolor='#ffffff', edgecolor='#cbd5e1')
+ax2.set_ylim(-0.04, 0.45)
 ax2.grid(True)
 
 # Panel 3: Angular Velocity w(t)
-ax3.plot(t_rel, w_ref, "b--", label=r"Reference $\omega_{\mathrm{ref}}(\tau)$ (Flatness Feedforward)")
-ax3.plot(t_rel, wz_act, color="purple", label=r"Actual Turn Rate $\omega_z(t)$ (IMU Gyro)")
+ax3.plot(t_rel, w_ref, color='#2563eb', linestyle='--', lw=2.0, label=r'Reference $\omega_{\mathrm{ref}}(\tau)$ (Feedforward)')
+ax3.plot(t_rel, wz_act, color='#9333ea', linestyle='-', lw=1.8, label=r'Actual Turn Rate $\omega_z(t)$ (IMU Gyro)')
+ax3.axhline(0.0, color='gray', linestyle=':', lw=0.8)
 ax3.set_xlabel("Pursuit Time [s]")
-ax3.set_ylabel(r"$\omega$ [rad/s]")
-ax3.set_title(r"(c) Angular Velocity: Feedforward $\omega_{\mathrm{ref}}(\tau)$ vs Commanded Turn Rate $\omega_z(t)$", fontsize=10)
-ax3.legend(loc="upper right", framealpha=0.9)
+ax3.set_ylabel(r"Turn Rate $\omega$ [rad/s]")
+ax3.set_title(r"(c) Angular Turn Rate: Feedforward $\omega_{\mathrm{ref}}(\tau)$ vs Actual $\omega_z(t)$", fontsize=10, loc='left')
+ax3.legend(loc="upper right", framealpha=0.92, facecolor='#ffffff', edgecolor='#cbd5e1')
+w_min_val = min(np.min(w_ref), np.min(wz_act))
+w_max_val = max(np.max(w_ref), np.max(wz_act))
+w_span = max(0.2, w_max_val - w_min_val)
+ax3.set_ylim(w_min_val - 0.25 * w_span, w_max_val + 0.35 * w_span)
 ax3.grid(True)
 
-plt.tight_layout()
 fig1_path = os.path.join(REPORT_DIR, "fig_ref_x_and_velocity.png")
-fig1.savefig(fig1_path, dpi=300)
+fig1.savefig(fig1_path, dpi=300, bbox_inches='tight')
 plt.close(fig1)
-print(f"[+] Saved: {fig1_path}")
+print(f"[+] Saved clean reference plot: {fig1_path}")
 
 # =============================================================================
-# FIGURE 2: Tracking Errors
+# FIGURE 3: Closed-Loop Trajectory Tracking Errors
+# Clean subplots without ANY blocking text boxes or overlapping curves.
 # =============================================================================
 fig2, (ax_e1, ax_e2, ax_e3) = plt.subplots(3, 1, figsize=(7.2, 5.6), sharex=True)
-fig2.suptitle("Closed-Loop Trajectory Tracking Errors & Convergence", fontweight="bold", y=0.98)
+plt.subplots_adjust(hspace=0.32)
 
 # Panel 1: Position Tracking Errors (e_x and e_y)
-ax_e1.plot(t_rel, e_x * 100, "b-", label=r"Longitudinal Error $e_x(t) = x_{\mathrm{ref}} - x_{\mathrm{act}}$")
-ax_e1.plot(t_rel, e_y * 100, "g-", label=r"Lateral Error $e_y(t) = y_{\mathrm{ref}} - y_{\mathrm{act}}$")
-ax_e1.plot(t_rel, e_d * 100, "r--", linewidth=1.4, label=r"Euclidean Error $e_d(t) = \sqrt{e_x^2 + e_y^2}$")
-ax_e1.axhline(0, color="black", linestyle=":", linewidth=0.8)
+ax_e1.plot(t_rel, e_x * 100, color='#2563eb', lw=1.8, label=r'Longitudinal Error $e_x(t) = x_{\mathrm{ref}} - x_{\mathrm{act}}$')
+ax_e1.plot(t_rel, e_y * 100, color='#059669', lw=1.8, label=r'Lateral Error $e_y(t) = y_{\mathrm{ref}} - y_{\mathrm{act}}$')
+ax_e1.plot(t_rel, e_d * 100, color='#dc2626', linestyle='--', lw=1.6, label=r'Euclidean Error $e_d(t) = \sqrt{e_x^2 + e_y^2}$')
+ax_e1.axhline(0, color='black', linestyle=':', linewidth=0.8)
 ax_e1.set_ylabel("Error [cm]")
-ax_e1.set_title(r"(a) Position Tracking Errors: $e_x(t)$, $e_y(t)$, and Total Euclidean Error $e_d(t)$", fontsize=10)
-ax_e1.legend(loc="upper right", framealpha=0.9)
+ax_e1.set_title(r"(a) Position Errors: Longitudinal $e_x(t)$, Lateral $e_y(t)$, & Euclidean $e_d(t)$", fontsize=10, loc='left')
+ax_e1.legend(loc="upper left", framealpha=0.92, facecolor='#ffffff', edgecolor='#cbd5e1')
+e_max = max(np.max(e_x * 100), np.max(e_y * 100), np.max(e_d * 100))
+e_min = min(np.min(e_x * 100), np.min(e_y * 100), 0.0)
+ax_e1.set_ylim(e_min - 6.0, e_max + 14.0)
 ax_e1.grid(True)
 
 # Panel 2: Velocity Tracking Error e_v(t)
-ax_e2.plot(t_rel, e_v, "m-", label=r"Velocity Error $e_v(t) = v_{\mathrm{ref}} - v_{\mathrm{act}}$")
-ax_e2.axhline(0, color="black", linestyle=":", linewidth=0.8)
+ax_e2.plot(t_rel, e_v, color='#d97706', lw=1.8, label=r'Velocity Error $e_v(t) = v_{\mathrm{ref}} - v_{\mathrm{act}}$')
+ax_e2.axhline(0, color='black', linestyle=':', linewidth=0.8)
 ax_e2.set_ylabel("Error [m/s]")
-ax_e2.set_title(r"(b) Forward Velocity Tracking Error $e_v(t)$", fontsize=10)
-ax_e2.legend(loc="upper right", framealpha=0.9)
+ax_e2.set_title(r"(b) Forward Linear Velocity Error $e_v(t)$", fontsize=10, loc='left')
+ax_e2.legend(loc="upper right", framealpha=0.92, facecolor='#ffffff', edgecolor='#cbd5e1')
+ev_max = np.max(e_v)
+ev_min = np.min(e_v)
+ev_span = max(0.1, ev_max - ev_min)
+ax_e2.set_ylim(ev_min - 0.2 * ev_span, ev_max + 0.35 * ev_span)
 ax_e2.grid(True)
 
 # Panel 3: Heading Orientation Error e_theta(t)
-ax_e3.plot(t_rel, e_theta_deg, color="#d97706", label=r"Heading Error $e_\theta(t) = \theta_{\mathrm{ref}} - \theta_{\mathrm{act}}$")
-ax_e3.axhline(0, color="black", linestyle=":", linewidth=0.8)
+ax_e3.plot(t_rel, e_theta_deg, color='#7c3aed', lw=1.8, label=r'Heading Error $e_\theta(t) = \theta_{\mathrm{ref}} - \theta_{\mathrm{act}}$')
+ax_e3.axhline(0, color='black', linestyle=':', linewidth=0.8)
 ax_e3.set_xlabel("Pursuit Time [s]")
 ax_e3.set_ylabel("Error [deg]")
-ax_e3.set_title(r"(c) Heading / Tangent Alignment Error $e_\theta(t)$", fontsize=10)
-ax_e3.legend(loc="upper right", framealpha=0.9)
+ax_e3.set_title(r"(c) Heading Orientation Error $e_\theta(t)$", fontsize=10, loc='left')
+ax_e3.legend(loc="upper right", framealpha=0.92, facecolor='#ffffff', edgecolor='#cbd5e1')
+eth_max = np.max(e_theta_deg)
+eth_min = np.min(e_theta_deg)
+eth_span = max(10.0, eth_max - eth_min)
+ax_e3.set_ylim(eth_min - 0.15 * eth_span, eth_max + 0.30 * eth_span)
 ax_e3.grid(True)
 
-# Summary Stats Text Box on bottom panel
-stats_text = (
-    f"Tracking Performance Summary:\n"
-    f"• Position RMSE: {rmse_d*100:.2f} cm\n"
-    f"• Velocity RMSE: {rmse_v:.3f} m/s\n"
-    f"• Max Position Error: {max_e_d*100:.2f} cm\n"
-    f"• Final Standoff Error: {final_d_err*100:.2f} cm (Goal: 20.0 cm)"
-)
-ax_e3.text(
-    0.02, 0.15, stats_text, transform=ax_e3.transAxes,
-    fontsize=8, verticalalignment="bottom",
-    bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8fafc", edgecolor="#94a3b8", alpha=0.95)
-)
-
-plt.tight_layout()
 fig2_path = os.path.join(REPORT_DIR, "fig_tracking_errors.png")
-fig2.savefig(fig2_path, dpi=300)
+fig2.savefig(fig2_path, dpi=300, bbox_inches='tight')
 plt.close(fig2)
-print(f"[+] Saved: {fig2_path}")
+print(f"[+] Saved clean tracking errors plot: {fig2_path}")
 
-# Copy latest 2D path map from RUN_DIR into report/
+# Copy all 3 updated figures to artifact directory as well
 import shutil
-src_map = os.path.join(RUN_DIR, "path_2d_planned_vs_actual.png")
-if os.path.exists(src_map):
-    dest_map = os.path.join(REPORT_DIR, "fig_path_2d_planned_vs_actual.png")
-    shutil.copyfile(src_map, dest_map)
-    print(f"[+] Copied 2D path map to: {dest_map}")
+art_dir = r"C:\Users\raian\.gemini\antigravity\brain\a2e876b2-b77f-437e-826e-a3bfc7a7c19b"
+for fn in ["fig_path_2d_planned_vs_actual.png", "fig_ref_x_and_velocity.png", "fig_tracking_errors.png"]:
+    src_f = os.path.join(REPORT_DIR, fn)
+    dst_f = os.path.join(art_dir, fn)
+    try:
+        shutil.copyfile(src_f, dst_f)
+    except Exception:
+        pass
 
 # Save presentation metrics summary JSON
 summary_metrics = {
