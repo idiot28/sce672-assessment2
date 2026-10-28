@@ -106,6 +106,26 @@ def send_gui_command(action: str, target_tag_id: int = None, params: dict = None
         pass
 
 
+SLIDER_SPECS_LEFT = [
+    ("sweep_wz_rad", "360° Sweep Wz", 0.15, 1.40, 0.05, lambda v: f"{v:.2f} rad/s ({math.degrees(v):.0f}°/s)"),
+    ("align_wz_max", "Max Align Wz", 0.15, 1.50, 0.05, lambda v: f"{v:.2f} rad/s ({math.degrees(v):.0f}°/s)"),
+    ("v_max_mps", "Max Fwd Speed", 0.08, 0.55, 0.02, lambda v: f"{v:.2f} m/s"),
+    ("v_min_mps", "Min Approach Spd", 0.04, 0.25, 0.01, lambda v: f"{v:.2f} m/s"),
+    ("turn_radius_m", "Min Turn Rad R", 0.10, 1.50, 0.05, lambda v: f"{v:.2f} m"),
+    ("chase_wz_max", "Max Chase Wz", 0.15, 1.40, 0.05, lambda v: f"{v:.2f} rad/s ({math.degrees(v):.0f}°/s)"),
+    ("standoff_m", "Target Standoff", 0.10, 0.50, 0.01, lambda v: f"{v:.2f} m ({int(round(v*100))}cm)"),
+]
+
+SLIDER_SPECS_RIGHT = [
+    ("arm_x_mm", "Arm Forward X", 60.0, 220.0, 5.0, lambda v: f"{int(round(v))} mm"),
+    ("arm_y_mm", "Arm Height Y", -60.0, 160.0, 5.0, lambda v: f"{int(round(v))} mm"),
+    ("kp_bearing", "Bearing Gain Kp", 0.40, 3.50, 0.05, lambda v: f"{v:.2f}"),
+    ("kp_skew", "Skew Align Gain", 0.00, 1.50, 0.05, lambda v: f"{v:.2f}"),
+    ("tag_size_mm", "AprilTag Size", 25.0, 120.0, 1.0, lambda v: f"{int(round(v))} mm"),
+    ("tof_blocked_thresh_mm", "Arm ToF Thresh", 60.0, 320.0, 5.0, lambda v: f"< {int(round(v))} mm"),
+]
+
+
 class DebugApp:
     def __init__(self, root: tk.Tk, runner=None):
         self.root = root
@@ -125,6 +145,13 @@ class DebugApp:
         self.slider_vars = {}
         self.slider_val_labels = {}
         self.tof_mode_var = tk.StringVar(value=str(self.tuning.get("tof_mode", "CAM_ONLY")))
+        for spec in SLIDER_SPECS_LEFT + SLIDER_SPECS_RIGHT:
+            key, _, vmin, vmax, res, fmt_fn = spec
+            init_val = float(self.tuning.get(key, DEFAULT_TUNING.get(key, 0.0)))
+            var = tk.DoubleVar(value=init_val)
+            self.slider_vars[key] = (var, fmt_fn, res >= 1.0)
+        self.tuning_win = None
+
         self.pressed_keys = set()
         self._was_wasd_moving = False
         self.wasd_btns = {}
@@ -145,21 +172,21 @@ class DebugApp:
 
     def _build_ui(self):
         # =====================================================================
-        # TOP HEADER: State, Target Selection, Start Mission, Return to Teleop, E-Stop
+        # TOP HEADER: State, Target Selection, Start Mission, Return to Teleop, Tuning Gear, E-Stop
         # =====================================================================
-        top = tk.Frame(self.root, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=8, pady=4)
-        top.pack(fill=tk.X, padx=8, pady=(6, 3))
+        top = tk.Frame(self.root, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=10, pady=5)
+        top.pack(fill=tk.X, padx=8, pady=(6, 4))
 
         title_box = tk.Frame(top, bg="#151c28")
         title_box.pack(side=tk.LEFT)
         tk.Label(
             title_box,
-            text="DJI RoboMaster EP — Assessment 2 (v4) Debugger & Live Tuner",
-            fg="#00e5ff", bg="#151c28", font=("Segoe UI", 11, "bold")
+            text="DJI RoboMaster EP — Assessment 2 (v4) Real-Time Autonomous Dashboard",
+            fg="#00e5ff", bg="#151c28", font=("Segoe UI", 12, "bold")
         ).pack(anchor="w")
         tk.Label(
             title_box,
-            text="Real-Time 360° Sweep, Flat Cubic Trajectory, Standoff & Motor Armature Voltages",
+            text="Pure Vision Guidance  |  Differential Flatness (vy = 0)  |  Target AprilTag 3",
             fg="#94a3b8", bg="#151c28", font=("Segoe UI", 8)
         ).pack(anchor="w")
 
@@ -168,237 +195,135 @@ class DebugApp:
 
         self.lbl_state = tk.Label(
             btn_box, text="STATE: 🟢 TELEOP / POSITIONING", fg="#00e676", bg="#0f1520",
-            font=("Consolas", 10, "bold"), padx=8, pady=3,
+            font=("Consolas", 11, "bold"), padx=10, pady=4,
             highlightbackground="#283347", highlightthickness=1
         )
-        self.lbl_state.pack(side=tk.LEFT, padx=(0, 6))
+        self.lbl_state.pack(side=tk.LEFT, padx=(0, 8))
 
         # Big Prominent Mission Action Button (Starts Mission, Stops Mission, or Returns to Teleop)
         self.btn_mission_action = tk.Button(
             btn_box, text="🚀 START AUTONOMOUS MISSION [Space]", bg="#059669", fg="#ffffff",
             activebackground="#10b981", activeforeground="#ffffff",
-            font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=10, pady=2,
+            font=("Segoe UI", 10, "bold"), relief=tk.FLAT, padx=12, pady=3,
             command=self._on_action_button_click
         )
         self.btn_mission_action.pack(side=tk.LEFT, padx=(0, 6))
 
         self.btn_teleop_return = tk.Button(
             btn_box, text="🎮 TELEOP", bg="#1e293b", fg="#38bdf8",
-            activebackground="#334155", font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2,
+            activebackground="#334155", font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=8, pady=3,
             command=self._return_to_teleop
         )
         self.btn_teleop_return.pack(side=tk.LEFT, padx=(0, 6))
 
         for tid in (1, 2, 3):
             tk.Button(
-                btn_box, text=f"Target T{tid}", bg="#1e293b", fg="#e2e8f0",
+                btn_box, text=f"T{tid}", bg="#1e293b", fg="#e2e8f0",
                 activebackground="#334155", activeforeground="#ffffff",
-                font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=5, pady=2,
+                font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=6, pady=3,
                 command=lambda t=tid: self._set_target_tag(t)
             ).pack(side=tk.LEFT, padx=1)
 
         tk.Button(
             btn_box, text="↻ RESTART [R]", bg="#0284c7", fg="#ffffff",
-            activebackground="#0369a1", font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2,
+            activebackground="#0369a1", font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=8, pady=3,
             command=self._restart_mission
         ).pack(side=tk.LEFT, padx=3)
 
+        # ⚙ Gear Icon Button to Open Tuning & Parameters Dialog
+        self.btn_open_tuning = tk.Button(
+            btn_box, text="⚙ PARAMETERS", bg="#1e293b", fg="#00e5ff",
+            activebackground="#334155", activeforeground="#00e5ff",
+            font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=8, pady=3,
+            command=self._open_tuning_window
+        )
+        self.btn_open_tuning.pack(side=tk.LEFT, padx=3)
+
+        self.lbl_sync = tk.Label(
+            btn_box, text="● Synced", fg="#00e676", bg="#151c28", font=("Consolas", 8, "bold")
+        )
+        self.lbl_sync.pack(side=tk.LEFT, padx=(2, 6))
+
         tk.Button(
             btn_box, text="■ E-STOP", bg="#dc2626", fg="#ffffff",
-            activebackground="#b91c1c", font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2,
+            activebackground="#b91c1c", font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=8, pady=3,
             command=lambda: send_gui_command("estop")
         ).pack(side=tk.LEFT, padx=(2, 0))
 
         # =====================================================================
-        # MAIN 3-COLUMN RESPONSIVE BODY
+        # MAIN 2-COLUMN RESPONSIVE BODY (Expanded & Maximized)
         # =====================================================================
         body = tk.Frame(self.root, bg="#0b0f17")
         body.pack(fill=tk.BOTH, expand=True, padx=8, pady=3)
 
         # ---------------------------------------------------------------------
-        # COLUMN 1 (Left, ~390px): Camera Feed + 360 Radar & Cubic Map
+        # COLUMN 1 (Left, 570px): Camera Feed + 360 Radar & Cubic Map + WASD Strip
         # ---------------------------------------------------------------------
-        col1 = tk.Frame(body, bg="#0b0f17", width=390)
-        col1.pack(side=tk.LEFT, fill=tk.Y, expand=False)
+        col1 = tk.Frame(body, bg="#0b0f17", width=570)
+        col1.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
         col1.pack_propagate(False)
 
+        # 1. Camera Feed Card (Enlarged to 560x315 - 16:9 native aspect ratio)
         cam_card = tk.Frame(col1, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=4, pady=4)
         cam_card.pack(fill=tk.X, pady=(0, 4))
+        cam_hdr = tk.Frame(cam_card, bg="#151c28")
+        cam_hdr.pack(fill=tk.X, pady=(0, 2))
         tk.Label(
-            cam_card, text="LIVE ROBOT CAMERA FEED (TAG + PARALLEL SKEW)",
-            fg="#94a3b8", bg="#151c28", font=("Segoe UI", 7, "bold")
-        ).pack(anchor="w", pady=(0, 2))
-        self.cam_label = tk.Label(cam_card, bg="#000000", width=380, height=214)
-        self.cam_label.pack()
-
-        cam_ctl = tk.Frame(cam_card, bg="#151c28")
-        cam_ctl.pack(fill=tk.X, pady=(2, 0))
-        self.btn_popout_cv2 = tk.Button(
-            cam_ctl, text="🗖 Pop-out Native Video (OpenCV)",
-            bg="#1e293b", fg="#38bdf8", activebackground="#334155",
-            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=4, pady=1,
-            command=self._toggle_cv2_window
-        )
-        self.btn_popout_cv2.pack(side=tk.LEFT)
+            cam_hdr, text="LIVE ROBOT CAMERA FEED (TAG + PARALLEL SKEW)",
+            fg="#94a3b8", bg="#151c28", font=("Segoe UI", 8, "bold")
+        ).pack(side=tk.LEFT)
         self.lbl_cam_fps = tk.Label(
-            cam_ctl, text="Native Direct Feed | 0ms Latency",
-            fg="#00e676", bg="#151c28", font=("Consolas", 7)
+            cam_hdr, text="Native Direct Feed | 0ms Latency",
+            fg="#00e676", bg="#151c28", font=("Consolas", 8)
         )
         self.lbl_cam_fps.pack(side=tk.RIGHT)
 
+        self.cam_label = tk.Label(cam_card, bg="#000000", width=560, height=315)
+        self.cam_label.pack()
+
+        cam_ctl = tk.Frame(cam_card, bg="#151c28")
+        cam_ctl.pack(fill=tk.X, pady=(3, 0))
+        self.btn_popout_cv2 = tk.Button(
+            cam_ctl, text="🗖 Pop-out Native Video (OpenCV)",
+            bg="#1e293b", fg="#38bdf8", activebackground="#334155",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2,
+            command=self._toggle_cv2_window
+        )
+        self.btn_popout_cv2.pack(side=tk.LEFT)
+
+        # 2. 360 Radar & 2D Flat Cubic Map Card (Enlarged width=560, height=225)
         map_card = tk.Frame(col1, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=4, pady=4)
-        map_card.pack(fill=tk.BOTH, expand=True)
+        map_card.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
         map_hdr = tk.Frame(map_card, bg="#151c28")
         map_hdr.pack(fill=tk.X, pady=(0, 2))
         tk.Label(
             map_hdr, text="360° RADAR & 2D FLAT CUBIC MAP",
-            fg="#94a3b8", bg="#151c28", font=("Segoe UI", 7, "bold")
+            fg="#94a3b8", bg="#151c28", font=("Segoe UI", 8, "bold")
         ).pack(side=tk.LEFT)
         self.btn_save_path = tk.Button(
             map_hdr, text="💾 Save Path Plot", bg="#0284c7", fg="#ffffff",
-            activebackground="#0369a1", font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=6, pady=0,
+            activebackground="#0369a1", font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=1,
             command=self._save_path_plot
         )
         self.btn_save_path.pack(side=tk.RIGHT)
-        self.map_canvas = tk.Canvas(map_card, width=380, height=180, bg="#0f1520", highlightthickness=0)
+        self.map_canvas = tk.Canvas(map_card, width=560, height=225, bg="#0f1520", highlightthickness=0)
         self.map_canvas.pack(fill=tk.BOTH, expand=True)
 
-        # ---------------------------------------------------------------------
-        # COLUMN 2 (Center, ~420px): Live Sliders (2-Col Grid) & WASD Pad
-        # ---------------------------------------------------------------------
-        col2 = tk.Frame(body, bg="#151c28", highlightbackground="#00e5ff", highlightthickness=1, padx=8, pady=6, width=420)
-        col2.pack(side=tk.LEFT, fill=tk.Y, expand=False, padx=6)
-        col2.pack_propagate(False)
-
-        hdr_tune = tk.Frame(col2, bg="#151c28")
-        hdr_tune.pack(fill=tk.X, pady=(0, 3))
-        tk.Label(
-            hdr_tune, text="⚙ LIVE TUNING CONTROLS",
-            fg="#00e5ff", bg="#151c28", font=("Segoe UI", 9, "bold")
-        ).pack(side=tk.LEFT)
-        self.lbl_sync = tk.Label(
-            hdr_tune, text="● Live Sync", fg="#00e676", bg="#151c28", font=("Consolas", 7, "bold")
-        )
-        self.lbl_sync.pack(side=tk.RIGHT)
-
-        # 2-Column Grid of 13 Sliders: Motion/Chassis on Left, Arm/Vision on Right
-        sliders_grid = tk.Frame(col2, bg="#151c28")
-        sliders_grid.pack(fill=tk.X)
-        sliders_grid.columnconfigure(0, weight=1)
-        sliders_grid.columnconfigure(1, weight=1)
-
-        slider_specs_left = [
-            ("sweep_wz_rad", "360° Sweep Wz", 0.15, 1.40, 0.05, lambda v: f"{v:.2f} rad/s ({math.degrees(v):.0f}°/s)"),
-            ("align_wz_max", "Max Align Wz", 0.15, 1.50, 0.05, lambda v: f"{v:.2f} rad/s ({math.degrees(v):.0f}°/s)"),
-            ("v_max_mps", "Max Fwd Speed", 0.08, 0.55, 0.02, lambda v: f"{v:.2f} m/s"),
-            ("v_min_mps", "Min Approach Spd", 0.04, 0.25, 0.01, lambda v: f"{v:.2f} m/s"),
-            ("turn_radius_m", "Min Turn Rad R", 0.10, 1.50, 0.05, lambda v: f"{v:.2f} m"),
-            ("chase_wz_max", "Max Chase Wz", 0.15, 1.40, 0.05, lambda v: f"{v:.2f} rad/s ({math.degrees(v):.0f}°/s)"),
-            ("standoff_m", "Target Standoff", 0.10, 0.50, 0.01, lambda v: f"{v:.2f} m ({int(round(v*100))}cm)"),
-        ]
-
-        slider_specs_right = [
-            ("arm_x_mm", "Arm Forward X", 60.0, 220.0, 5.0, lambda v: f"{int(round(v))} mm"),
-            ("arm_y_mm", "Arm Height Y", -60.0, 160.0, 5.0, lambda v: f"{int(round(v))} mm"),
-            ("kp_bearing", "Bearing Gain Kp", 0.40, 3.50, 0.05, lambda v: f"{v:.2f}"),
-            ("kp_skew", "Skew Align Gain", 0.00, 1.50, 0.05, lambda v: f"{v:.2f}"),
-            ("tag_size_mm", "AprilTag Size", 25.0, 120.0, 1.0, lambda v: f"{int(round(v))} mm"),
-            ("tof_blocked_thresh_mm", "Arm ToF Thresh", 60.0, 320.0, 5.0, lambda v: f"< {int(round(v))} mm"),
-        ]
-
-        def _make_slider_cell(parent, r, c, spec):
-            key, label_txt, vmin, vmax, res, fmt_fn = spec
-            cell = tk.Frame(parent, bg="#0f1520", highlightbackground="#283347", highlightthickness=1, padx=4, pady=1)
-            cell.grid(row=r, column=c, sticky="nsew", padx=2, pady=1)
-
-            top_r = tk.Frame(cell, bg="#0f1520")
-            top_r.pack(fill=tk.X)
-            tk.Label(top_r, text=label_txt, fg="#e2e8f0", bg="#0f1520", font=("Segoe UI", 7, "bold")).pack(side=tk.LEFT)
-            init_val = float(self.tuning.get(key, DEFAULT_TUNING[key]))
-            val_lbl = tk.Label(top_r, text=fmt_fn(init_val), fg="#00e5ff", bg="#0f1520", font=("Consolas", 7, "bold"))
-            val_lbl.pack(side=tk.RIGHT)
-
-            var = tk.DoubleVar(value=init_val)
-            self.slider_vars[key] = (var, fmt_fn, res >= 1.0)
-            self.slider_val_labels[key] = val_lbl
-
-            scale = tk.Scale(
-                cell, variable=var, from_=vmin, to=vmax, resolution=res,
-                orient=tk.HORIZONTAL, showvalue=False, bg="#0f1520", fg="#00e5ff",
-                troughcolor="#1e293b", highlightthickness=0, bd=0, length=180, sliderlength=12, width=8,
-                command=lambda _v, k=key: self._on_slider_drag(k)
-            )
-            scale.bind("<ButtonRelease-1>", lambda _e: self._push_tuning(force_arm=False))
-            scale.pack(fill=tk.X)
-
-        for row_i, spec in enumerate(slider_specs_left):
-            _make_slider_cell(sliders_grid, row_i, 0, spec)
-        for row_i, spec in enumerate(slider_specs_right):
-            _make_slider_cell(sliders_grid, row_i, 1, spec)
-
-        # Presets Row: Speed Presets & Arm Presets
-        presets_box = tk.Frame(col2, bg="#151c28", pady=2)
-        presets_box.pack(fill=tk.X, pady=(3, 1))
-
-        tk.Label(presets_box, text="Presets:", fg="#94a3b8", bg="#151c28", font=("Segoe UI", 7, "bold")).pack(side=tk.LEFT, padx=(0, 2))
-        tk.Button(
-            presets_box, text="🐢 Slow", bg="#1e293b", fg="#38bdf8", relief=tk.FLAT, font=("Segoe UI", 7, "bold"), padx=4, pady=1,
-            command=lambda: self._apply_preset({"sweep_wz_rad": 0.30, "align_wz_max": 0.42, "v_max_mps": 0.18, "chase_wz_max": 0.40, "turn_radius_m": 0.50})
-        ).pack(side=tk.LEFT, padx=1)
-        tk.Button(
-            presets_box, text="⚖ Bal", bg="#1e293b", fg="#00e676", relief=tk.FLAT, font=("Segoe UI", 7, "bold"), padx=4, pady=1,
-            command=lambda: self._apply_preset({"sweep_wz_rad": 0.45, "align_wz_max": 0.60, "v_max_mps": 0.28, "chase_wz_max": 0.55, "turn_radius_m": 0.35})
-        ).pack(side=tk.LEFT, padx=1)
-        tk.Button(
-            presets_box, text="⚡ Fast", bg="#1e293b", fg="#ffab00", relief=tk.FLAT, font=("Segoe UI", 7, "bold"), padx=4, pady=1,
-            command=lambda: self._apply_preset({"sweep_wz_rad": 0.70, "align_wz_max": 0.90, "v_max_mps": 0.40, "chase_wz_max": 0.80, "turn_radius_m": 0.25})
-        ).pack(side=tk.LEFT, padx=1)
-
-        tk.Label(presets_box, text="| Arm:", fg="#64748b", bg="#151c28", font=("Segoe UI", 7)).pack(side=tk.LEFT, padx=2)
-        tk.Button(
-            presets_box, text="Floor", bg="#1e293b", fg="#e2e8f0", relief=tk.FLAT, font=("Segoe UI", 7), padx=4, pady=1,
-            command=lambda: self._set_arm_pose(105, 30)
-        ).pack(side=tk.LEFT, padx=1)
-        tk.Button(
-            presets_box, text="Mid", bg="#1e293b", fg="#e2e8f0", relief=tk.FLAT, font=("Segoe UI", 7), padx=4, pady=1,
-            command=lambda: self._set_arm_pose(105, 60)
-        ).pack(side=tk.LEFT, padx=1)
-        tk.Button(
-            presets_box, text="Low", bg="#1e293b", fg="#e2e8f0", relief=tk.FLAT, font=("Segoe UI", 7), padx=4, pady=1,
-            command=lambda: self._set_arm_pose(120, 15)
-        ).pack(side=tk.LEFT, padx=1)
-        tk.Button(
-            presets_box, text="🦾 Move Arm", bg="#0284c7", fg="#ffffff", relief=tk.FLAT, font=("Segoe UI", 7, "bold"), padx=4, pady=1,
-            command=lambda: self._push_tuning(force_arm=True)
-        ).pack(side=tk.RIGHT)
-
-        # Front ToF Mode Selector (CAM_ONLY vs AUTO vs CH0..CH3)
-        tof_sel = tk.Frame(col2, bg="#151c28", pady=1)
-        tof_sel.pack(fill=tk.X, pady=(1, 2))
-        tk.Label(tof_sel, text="Sensor:", fg="#94a3b8", bg="#151c28", font=("Segoe UI", 7, "bold")).pack(side=tk.LEFT, padx=(0, 2))
-        for m in ("CAM_ONLY", "AUTO", "CH0", "CH1", "CH2", "CH3"):
-            tk.Radiobutton(
-                tof_sel, text=m, variable=self.tof_mode_var, value=m,
-                bg="#151c28", fg="#e2e8f0", selectcolor="#0f1520", activebackground="#151c28",
-                font=("Consolas", 7, "bold"), command=lambda: self._push_tuning(force_arm=False)
-            ).pack(side=tk.LEFT, padx=1)
-
-        # WASD Keyboard Teleop & Restart Mission Controls (Strictly Nonholonomic: No Strafe)
-        nudge_frame = tk.Frame(col2, bg="#0f1520", highlightbackground="#00e5ff", highlightthickness=1, padx=4, pady=3)
-        nudge_frame.pack(fill=tk.X, pady=(2, 0))
-        top_wasd = tk.Frame(nudge_frame, bg="#0f1520")
+        # 3. WASD Keyboard Teleop Card (Sleek horizontal strip)
+        nudge_card = tk.Frame(col1, bg="#0f1520", highlightbackground="#00e5ff", highlightthickness=1, padx=6, pady=3)
+        nudge_card.pack(fill=tk.X)
+        top_wasd = tk.Frame(nudge_card, bg="#0f1520")
         top_wasd.pack(fill=tk.X, pady=(0, 2))
         tk.Label(
-            top_wasd, text="🎮 WASD KEYBOARD TELEOP (No Strafe vy=0):",
-            fg="#00e5ff", bg="#0f1520", font=("Segoe UI", 7, "bold")
+            top_wasd, text="🎮 WASD KEYBOARD TELEOP (vy = 0.0 strictly nonholonomic):",
+            fg="#00e5ff", bg="#0f1520", font=("Segoe UI", 8, "bold")
         ).pack(side=tk.LEFT)
-        tk.Button(
-            top_wasd, text="↻ RESTART [R]", bg="#0284c7", fg="#ffffff",
-            activebackground="#0369a1", relief=tk.FLAT, font=("Segoe UI", 7, "bold"), padx=6, pady=1,
-            command=self._restart_mission
-        ).pack(side=tk.RIGHT)
+        self.lbl_teleop_hint = tk.Label(
+            top_wasd, text="● Keyboard Active", fg="#00e676", bg="#0f1520", font=("Consolas", 7, "bold")
+        )
+        self.lbl_teleop_hint.pack(side=tk.RIGHT)
 
-        btn_row = tk.Frame(nudge_frame, bg="#0f1520")
+        btn_row = tk.Frame(nudge_card, bg="#0f1520")
         btn_row.pack(fill=tk.X)
         wasd_defs = [
             ("w", "[W] ▲ Fwd", "#00e676", lambda: send_gui_command("wasd", vx=float(self.tuning.get("v_max_mps", 0.24)), wz=0.0, duration=0.45)),
@@ -409,53 +334,31 @@ class DebugApp:
         for k_char, txt, fg_col, cmd_fn in wasd_defs:
             b = tk.Button(
                 btn_row, text=txt, bg="#1e293b", fg=fg_col,
-                activebackground="#334155", relief=tk.FLAT, font=("Consolas", 7, "bold"), padx=4, pady=1,
+                activebackground="#334155", relief=tk.FLAT, font=("Consolas", 8, "bold"), padx=6, pady=2,
                 command=cmd_fn
             )
-            b.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+            b.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
             self.wasd_btns[k_char] = (b, fg_col)
 
         tk.Button(
-            btn_row, text="[Space] ■", bg="#dc2626", fg="#ffffff",
-            relief=tk.FLAT, font=("Consolas", 7, "bold"), padx=4, pady=1,
+            btn_row, text="[Space] ■ Halt", bg="#dc2626", fg="#ffffff",
+            activebackground="#b91c1c", relief=tk.FLAT, font=("Consolas", 8, "bold"), padx=6, pady=2,
             command=lambda: send_gui_command("wasd", vx=0.0, wz=0.0, duration=0.0)
-        ).pack(side=tk.LEFT, padx=1)
+        ).pack(side=tk.LEFT, padx=2)
 
         # ---------------------------------------------------------------------
-        # COLUMN 3 (Right, Responsive remainder): ToF, Telemetry, Voltages & Table 1
+        # COLUMN 2 (Right, Fills Rest of Window): Telemetry, Voltages, Equations, ToF & Table 1
         # ---------------------------------------------------------------------
-        col3 = tk.Frame(body, bg="#0b0f17")
-        col3.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(2, 0))
+        col2 = tk.Frame(body, bg="#0b0f17")
+        col2.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0))
 
-        # 1. Front ToF Sensors Auto-Discovery Card
-        tof_card = tk.Frame(col3, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=6, pady=4)
-        tof_card.pack(fill=tk.X, pady=(0, 4))
-        tk.Label(
-            tof_card, text="FRONT ToF SENSORS AUTO-DISCOVERY (BLOCKED BY ARM vs. STRAIGHT CLEAR)",
-            fg="#00e5ff", bg="#151c28", font=("Segoe UI", 7, "bold")
-        ).pack(anchor="w", pady=(0, 2))
-
-        tof_grid = tk.Frame(tof_card, bg="#151c28")
-        tof_grid.pack(fill=tk.X)
-        self.tof_labels = []
-        for i in range(4):
-            box = tk.Frame(tof_grid, bg="#0f1520", highlightbackground="#283347", highlightthickness=1, padx=4, pady=2)
-            box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-            lbl_title = tk.Label(box, text=f"ToF CH{i}", fg="#94a3b8", bg="#0f1520", font=("Consolas", 7, "bold"))
-            lbl_title.pack()
-            lbl_val = tk.Label(box, text="0 mm", fg="#e2e8f0", bg="#0f1520", font=("Consolas", 10, "bold"))
-            lbl_val.pack()
-            lbl_role = tk.Label(box, text="UNUSED", fg="#64748b", bg="#0f1520", font=("Consolas", 7, "bold"))
-            lbl_role.pack()
-            self.tof_labels.append((box, lbl_title, lbl_val, lbl_role))
-
-        # 2. Real-Time Kinematics & Vision Grid Card
-        metrics_card = tk.Frame(col3, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=6, pady=4)
+        # 1. Real-Time Kinematics & Vision Grid Card (Enlarged)
+        metrics_card = tk.Frame(col2, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=8, pady=5)
         metrics_card.pack(fill=tk.X, pady=(0, 4))
         tk.Label(
             metrics_card, text="REAL-TIME KINEMATICS (NO STRAFE vy=0) & VISION TELEMETRY",
-            fg="#94a3b8", bg="#151c28", font=("Segoe UI", 7, "bold")
-        ).pack(anchor="w", pady=(0, 2))
+            fg="#94a3b8", bg="#151c28", font=("Segoe UI", 8, "bold")
+        ).pack(anchor="w", pady=(0, 3))
 
         m_grid = tk.Frame(metrics_card, bg="#151c28")
         m_grid.pack(fill=tk.X)
@@ -474,81 +377,103 @@ class DebugApp:
         ]
         for idx, (key, title) in enumerate(fields):
             r, c = divmod(idx, 2)
-            cell = tk.Frame(m_grid, bg="#0f1520", highlightbackground="#283347", highlightthickness=1, padx=4, pady=1)
-            cell.grid(row=r, column=c, sticky="nsew", padx=2, pady=1)
+            cell = tk.Frame(m_grid, bg="#0f1520", highlightbackground="#283347", highlightthickness=1, padx=6, pady=3)
+            cell.grid(row=r, column=c, sticky="nsew", padx=3, pady=2)
             m_grid.columnconfigure(c, weight=1)
-            tk.Label(cell, text=title, fg="#94a3b8", bg="#0f1520", font=("Segoe UI", 7)).pack(anchor="w")
-            v_lbl = tk.Label(cell, text="-", fg="#e2e8f0", bg="#0f1520", font=("Consolas", 8, "bold"))
+            tk.Label(cell, text=title, fg="#94a3b8", bg="#0f1520", font=("Segoe UI", 8)).pack(anchor="w")
+            v_lbl = tk.Label(cell, text="-", fg="#e2e8f0", bg="#0f1520", font=("Consolas", 11, "bold"))
             v_lbl.pack(anchor="w")
             self.kv_vars[key] = v_lbl
 
-        # 3. Motor Voltages V1..V4 & Wheel Speeds w1..w4 Card
-        volt_card = tk.Frame(col3, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=6, pady=4)
+        # 2. Motor Voltages V1..V4 & Wheel Speeds w1..w4 Card (Prominent & Large)
+        volt_card = tk.Frame(col2, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=8, pady=5)
         volt_card.pack(fill=tk.X, pady=(0, 4))
         tk.Label(
             volt_card, text="CHASSIS MOTOR ARMATURE VOLTAGES & WHEEL SPEEDS (V = Kv*w + Ka*dw/dt)",
-            fg="#94a3b8", bg="#151c28", font=("Segoe UI", 7, "bold")
-        ).pack(anchor="w", pady=(0, 2))
+            fg="#94a3b8", bg="#151c28", font=("Segoe UI", 8, "bold")
+        ).pack(anchor="w", pady=(0, 3))
 
         v_grid = tk.Frame(volt_card, bg="#151c28")
         v_grid.pack(fill=tk.X)
         self.volt_labels = []
         self.wheel_labels = []
         for i, mname in enumerate(("V1 (FR)", "V2 (FL)", "V3 (RL)", "V4 (RR)")):
-            vbox = tk.Frame(v_grid, bg="#0f1520", highlightbackground="#283347", highlightthickness=1, padx=4, pady=2)
-            vbox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-            tk.Label(vbox, text=mname, fg="#94a3b8", bg="#0f1520", font=("Consolas", 7, "bold")).pack()
-            vl = tk.Label(vbox, text="0.000 V", fg="#00e676", bg="#0f1520", font=("Consolas", 9, "bold"))
+            vbox = tk.Frame(v_grid, bg="#0f1520", highlightbackground="#283347", highlightthickness=1, padx=6, pady=4)
+            vbox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=3)
+            tk.Label(vbox, text=mname, fg="#94a3b8", bg="#0f1520", font=("Consolas", 8, "bold")).pack()
+            vl = tk.Label(vbox, text="0.000 V", fg="#00e676", bg="#0f1520", font=("Consolas", 16, "bold"))
             vl.pack()
-            wl = tk.Label(vbox, text="w = +0.00 rad/s", fg="#38bdf8", bg="#0f1520", font=("Consolas", 7))
+            wl = tk.Label(vbox, text="w = +0.00 rad/s", fg="#38bdf8", bg="#0f1520", font=("Consolas", 8))
             wl.pack()
             self.volt_labels.append(vl)
             self.wheel_labels.append(wl)
 
-        # 3b. Trajectory Matrices & Closed-Form Equations Card
-        traj_card = tk.Frame(col3, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=6, pady=3)
+        # 3. Trajectory Matrices & Closed-Form Equations Card
+        traj_card = tk.Frame(col2, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=8, pady=4)
         traj_card.pack(fill=tk.X, pady=(0, 4))
 
         traj_top = tk.Frame(traj_card, bg="#151c28")
         traj_top.pack(fill=tk.X)
         tk.Label(
             traj_top, text="📐 DIFFERENTIAL FLATNESS CUBIC EQUATIONS & MATRICES",
-            fg="#00e5ff", bg="#151c28", font=("Segoe UI", 7, "bold")
+            fg="#00e5ff", bg="#151c28", font=("Segoe UI", 8, "bold")
         ).pack(side=tk.LEFT)
 
         tk.Button(
             traj_top, text="📄 View Full Matrices", bg="#0284c7", fg="#ffffff",
-            activebackground="#0369a1", font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=6, pady=1,
+            activebackground="#0369a1", font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=1,
             command=self._show_matrix_window
         ).pack(side=tk.RIGHT)
 
-        poly_box = tk.Frame(traj_card, bg="#0f1520", highlightbackground="#283347", highlightthickness=1, padx=4, pady=2)
+        poly_box = tk.Frame(traj_card, bg="#0f1520", highlightbackground="#283347", highlightthickness=1, padx=6, pady=3)
         poly_box.pack(fill=tk.X, pady=(2, 0))
 
         self.lbl_traj_x = tk.Label(
             poly_box, text="x(t) = +0.0000 +0.1600*t +0.0000*t² -0.0000*t³",
-            fg="#00e676", bg="#0f1520", font=("Consolas", 8, "bold"), anchor="w"
+            fg="#00e676", bg="#0f1520", font=("Consolas", 9, "bold"), anchor="w"
         )
         self.lbl_traj_x.pack(fill=tk.X)
 
         self.lbl_traj_y = tk.Label(
             poly_box, text="y(t) = +0.0000 +0.0000*t +0.0000*t² -0.0000*t³",
-            fg="#38bdf8", bg="#0f1520", font=("Consolas", 8), anchor="w"
+            fg="#38bdf8", bg="#0f1520", font=("Consolas", 9), anchor="w"
         )
         self.lbl_traj_y.pack(fill=tk.X)
 
         self.lbl_traj_meta = tk.Label(
             poly_box, text="M(T) [4x4] Inverted | T = 3.50s | J = [[20, 4], [20, -4]] | Kv=0.380, Ka=0.060",
-            fg="#94a3b8", bg="#0f1520", font=("Consolas", 7), anchor="w"
+            fg="#94a3b8", bg="#0f1520", font=("Consolas", 8), anchor="w"
         )
         self.lbl_traj_meta.pack(fill=tk.X)
 
-        # 4. Table 1 Motor Voltage Log (with Scrollbar and full expansion)
-        t1_card = tk.Frame(col3, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=6, pady=4)
+        # 4. Front ToF Sensors Auto-Discovery Card
+        tof_card = tk.Frame(col2, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=8, pady=4)
+        tof_card.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(
+            tof_card, text="FRONT ToF SENSORS AUTO-DISCOVERY (BLOCKED BY ARM vs. STRAIGHT CLEAR)",
+            fg="#00e5ff", bg="#151c28", font=("Segoe UI", 8, "bold")
+        ).pack(anchor="w", pady=(0, 2))
+
+        tof_grid = tk.Frame(tof_card, bg="#151c28")
+        tof_grid.pack(fill=tk.X)
+        self.tof_labels = []
+        for i in range(4):
+            box = tk.Frame(tof_grid, bg="#0f1520", highlightbackground="#283347", highlightthickness=1, padx=6, pady=3)
+            box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=3)
+            lbl_title = tk.Label(box, text=f"ToF CH{i}", fg="#94a3b8", bg="#0f1520", font=("Consolas", 8, "bold"))
+            lbl_title.pack()
+            lbl_val = tk.Label(box, text="0 mm", fg="#e2e8f0", bg="#0f1520", font=("Consolas", 11, "bold"))
+            lbl_val.pack()
+            lbl_role = tk.Label(box, text="UNUSED", fg="#64748b", bg="#0f1520", font=("Consolas", 8, "bold"))
+            lbl_role.pack()
+            self.tof_labels.append((box, lbl_title, lbl_val, lbl_role))
+
+        # 5. Table 1 Motor Voltage Log (with Scrollbar and full expansion)
+        t1_card = tk.Frame(col2, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=8, pady=5)
         t1_card.pack(fill=tk.BOTH, expand=True)
         tk.Label(
             t1_card, text="TABLE 1: 1-SECOND MOTOR VOLTAGE TELEMETRY LOG (motor_voltage_log.csv)",
-            fg="#94a3b8", bg="#151c28", font=("Segoe UI", 7, "bold")
+            fg="#94a3b8", bg="#151c28", font=("Segoe UI", 8, "bold")
         ).pack(anchor="w", pady=(0, 2))
 
         text_container = tk.Frame(t1_card, bg="#0f1520")
@@ -696,7 +621,11 @@ class DebugApp:
     def _on_slider_drag(self, key: str):
         var, fmt_fn, is_int = self.slider_vars[key]
         val = int(round(var.get())) if is_int else round(float(var.get()), 3)
-        self.slider_val_labels[key].configure(text=fmt_fn(val))
+        if key in self.slider_val_labels:
+            try:
+                self.slider_val_labels[key].configure(text=fmt_fn(val))
+            except Exception:
+                pass
         self.tuning[key] = val
 
     def _push_tuning(self, force_arm: bool = False):
@@ -704,14 +633,21 @@ class DebugApp:
             self.tuning[key] = int(round(var.get())) if is_int else round(float(var.get()), 3)
         self.tuning["tof_mode"] = self.tof_mode_var.get()
         save_tuning_and_notify(self.tuning, force_arm_move=force_arm)
-        self.lbl_sync.configure(text=f"✓ Applied @ {time.strftime('%H:%M:%S')}", fg="#00e5ff")
+        if hasattr(self, 'lbl_sync') and self.lbl_sync.winfo_exists():
+            self.lbl_sync.configure(text=f"✓ Applied @ {time.strftime('%H:%M:%S')}", fg="#00e5ff")
+        if hasattr(self, 'lbl_dialog_sync') and self.lbl_dialog_sync.winfo_exists():
+            self.lbl_dialog_sync.configure(text=f"✓ Applied @ {time.strftime('%H:%M:%S')}", fg="#00e5ff")
 
     def _apply_preset(self, preset: dict):
         for k, v in preset.items():
             if k in self.slider_vars:
                 var, fmt_fn, is_int = self.slider_vars[k]
                 var.set(v)
-                self.slider_val_labels[k].configure(text=fmt_fn(v))
+                if k in self.slider_val_labels:
+                    try:
+                        self.slider_val_labels[k].configure(text=fmt_fn(v))
+                    except Exception:
+                        pass
                 self.tuning[k] = int(round(v)) if is_int else round(float(v), 3)
         self._push_tuning(force_arm=False)
 
@@ -723,6 +659,124 @@ class DebugApp:
         self.tuning["target_tag_id"] = int(tid)
         save_tuning_and_notify(self.tuning, force_arm_move=False)
         send_gui_command("set_tag", target_tag_id=tid)
+
+    def _open_tuning_window(self):
+        if hasattr(self, 'tuning_win') and self.tuning_win is not None and self.tuning_win.winfo_exists():
+            self.tuning_win.deiconify()
+            self.tuning_win.lift()
+            self.tuning_win.focus_force()
+            return
+
+        self.tuning_win = tk.Toplevel(self.root)
+        self.tuning_win.title("⚙ Live Tuning Controls & Motion Parameters — DJI RoboMaster EP")
+        self.tuning_win.geometry("700x580")
+        self.tuning_win.minsize(640, 520)
+        self.tuning_win.configure(bg="#151c28")
+        try:
+            self.tuning_win.transient(self.root)
+        except Exception:
+            pass
+
+        hdr = tk.Frame(self.tuning_win, bg="#151c28", padx=12, pady=8)
+        hdr.pack(fill=tk.X)
+        tk.Label(
+            hdr, text="⚙ LIVE TUNING CONTROLS & MOTION PARAMETERS",
+            fg="#00e5ff", bg="#151c28", font=("Segoe UI", 11, "bold")
+        ).pack(side=tk.LEFT)
+        self.lbl_dialog_sync = tk.Label(
+            hdr, text="● Changes Sync Instantly", fg="#00e676", bg="#151c28", font=("Consolas", 8, "bold")
+        )
+        self.lbl_dialog_sync.pack(side=tk.RIGHT)
+
+        sliders_box = tk.Frame(self.tuning_win, bg="#151c28", padx=10, pady=4)
+        sliders_box.pack(fill=tk.BOTH, expand=True)
+        sliders_box.columnconfigure(0, weight=1)
+        sliders_box.columnconfigure(1, weight=1)
+
+        def _make_slider_cell(parent, r, c, spec):
+            key, label_txt, vmin, vmax, res, fmt_fn = spec
+            cell = tk.Frame(parent, bg="#0f1520", highlightbackground="#283347", highlightthickness=1, padx=6, pady=3)
+            cell.grid(row=r, column=c, sticky="nsew", padx=3, pady=2)
+
+            top_r = tk.Frame(cell, bg="#0f1520")
+            top_r.pack(fill=tk.X)
+            tk.Label(top_r, text=label_txt, fg="#e2e8f0", bg="#0f1520", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT)
+
+            var, _, is_int = self.slider_vars[key]
+            curr_val = int(round(var.get())) if is_int else round(float(var.get()), 3)
+            val_lbl = tk.Label(top_r, text=fmt_fn(curr_val), fg="#00e5ff", bg="#0f1520", font=("Consolas", 8, "bold"))
+            val_lbl.pack(side=tk.RIGHT)
+            self.slider_val_labels[key] = val_lbl
+
+            scale = tk.Scale(
+                cell, variable=var, from_=vmin, to=vmax, resolution=res,
+                orient=tk.HORIZONTAL, showvalue=False, bg="#0f1520", fg="#00e5ff",
+                troughcolor="#1e293b", highlightthickness=0, bd=0, length=220, sliderlength=14, width=10,
+                command=lambda _v, k=key: self._on_slider_drag(k)
+            )
+            scale.bind("<ButtonRelease-1>", lambda _e: self._push_tuning(force_arm=False))
+            scale.pack(fill=tk.X, pady=(2, 0))
+
+        for row_i, spec in enumerate(SLIDER_SPECS_LEFT):
+            _make_slider_cell(sliders_box, row_i, 0, spec)
+        for row_i, spec in enumerate(SLIDER_SPECS_RIGHT):
+            _make_slider_cell(sliders_box, row_i, 1, spec)
+
+        # Presets Row: Speed Presets & Arm Presets
+        presets_box = tk.Frame(self.tuning_win, bg="#151c28", padx=10, pady=6)
+        presets_box.pack(fill=tk.X)
+
+        tk.Label(presets_box, text="Speed Presets:", fg="#94a3b8", bg="#151c28", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Button(
+            presets_box, text="🐢 Slow", bg="#1e293b", fg="#38bdf8", relief=tk.FLAT, font=("Segoe UI", 8, "bold"), padx=6, pady=2,
+            command=lambda: self._apply_preset({"sweep_wz_rad": 0.30, "align_wz_max": 0.42, "v_max_mps": 0.18, "chase_wz_max": 0.40, "turn_radius_m": 0.50})
+        ).pack(side=tk.LEFT, padx=2)
+        tk.Button(
+            presets_box, text="⚖ Bal", bg="#1e293b", fg="#00e676", relief=tk.FLAT, font=("Segoe UI", 8, "bold"), padx=6, pady=2,
+            command=lambda: self._apply_preset({"sweep_wz_rad": 0.45, "align_wz_max": 0.60, "v_max_mps": 0.28, "chase_wz_max": 0.55, "turn_radius_m": 0.35})
+        ).pack(side=tk.LEFT, padx=2)
+        tk.Button(
+            presets_box, text="⚡ Fast", bg="#1e293b", fg="#ffab00", relief=tk.FLAT, font=("Segoe UI", 8, "bold"), padx=6, pady=2,
+            command=lambda: self._apply_preset({"sweep_wz_rad": 0.70, "align_wz_max": 0.90, "v_max_mps": 0.40, "chase_wz_max": 0.80, "turn_radius_m": 0.25})
+        ).pack(side=tk.LEFT, padx=2)
+
+        tk.Label(presets_box, text="| Arm Presets:", fg="#64748b", bg="#151c28", font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(6, 4))
+        tk.Button(
+            presets_box, text="Floor", bg="#1e293b", fg="#e2e8f0", relief=tk.FLAT, font=("Segoe UI", 8), padx=6, pady=2,
+            command=lambda: self._set_arm_pose(105, 30)
+        ).pack(side=tk.LEFT, padx=2)
+        tk.Button(
+            presets_box, text="Mid", bg="#1e293b", fg="#e2e8f0", relief=tk.FLAT, font=("Segoe UI", 8), padx=6, pady=2,
+            command=lambda: self._set_arm_pose(105, 60)
+        ).pack(side=tk.LEFT, padx=2)
+        tk.Button(
+            presets_box, text="Low", bg="#1e293b", fg="#e2e8f0", relief=tk.FLAT, font=("Segoe UI", 8), padx=6, pady=2,
+            command=lambda: self._set_arm_pose(120, 15)
+        ).pack(side=tk.LEFT, padx=2)
+        tk.Button(
+            presets_box, text="🦾 Move Arm Now", bg="#0284c7", fg="#ffffff", relief=tk.FLAT, font=("Segoe UI", 8, "bold"), padx=8, pady=2,
+            command=lambda: self._push_tuning(force_arm=True)
+        ).pack(side=tk.RIGHT)
+
+        # Front ToF Mode Selector (CAM_ONLY vs AUTO vs CH0..CH3)
+        tof_sel = tk.Frame(self.tuning_win, bg="#151c28", padx=10, pady=4)
+        tof_sel.pack(fill=tk.X)
+        tk.Label(tof_sel, text="Front ToF Mode:", fg="#94a3b8", bg="#151c28", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 4))
+        for m in ("CAM_ONLY", "AUTO", "CH0", "CH1", "CH2", "CH3"):
+            tk.Radiobutton(
+                tof_sel, text=m, variable=self.tof_mode_var, value=m,
+                bg="#151c28", fg="#e2e8f0", selectcolor="#0f1520", activebackground="#151c28",
+                font=("Consolas", 8, "bold"), command=lambda: self._push_tuning(force_arm=False)
+            ).pack(side=tk.LEFT, padx=2)
+
+        # Bottom Action Bar
+        bottom = tk.Frame(self.tuning_win, bg="#151c28", padx=10, pady=8)
+        bottom.pack(fill=tk.X)
+        tk.Button(
+            bottom, text="✔ Close & Keep Parameters", bg="#059669", fg="#ffffff",
+            activebackground="#10b981", font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=14, pady=4,
+            command=self.tuning_win.withdraw
+        ).pack(side=tk.RIGHT)
 
     def _show_matrix_window(self):
         win = tk.Toplevel(self.root)
@@ -767,11 +821,11 @@ class DebugApp:
     def _draw_radar_and_path(self, d: dict):
         c = self.map_canvas
         c.delete("all")
-        w = max(380, c.winfo_width())
-        h = max(160, c.winfo_height())
+        w = max(560, c.winfo_width())
+        h = max(220, c.winfo_height())
 
         # Left half: 360-Degree Tag Memory Radar
-        rcx, rcy, rad = 75, h // 2, min(58, h // 2 - 12)
+        rcx, rcy, rad = 90, h // 2, min(75, h // 2 - 12)
         c.create_oval(rcx - rad, rcy - rad, rcx + rad, rcy + rad, fill="#131b2e", outline="#334155", width=1)
         c.create_oval(rcx - rad // 2, rcy - rad // 2, rcx + rad // 2, rcy + rad // 2, outline="#1e293b", width=1)
         c.create_text(rcx, rcy - rad - 7, text="360° Radar", fill="#00e5ff", font=("Segoe UI", 7, "bold"))
@@ -794,7 +848,7 @@ class DebugApp:
             c.create_text(tx + 12, ty, text=f"T{tid}", fill=col, font=("Consolas", 7, "bold"))
 
         # Right half: 2D Flat Cubic Trajectory & Persistent Odometry Trail Plot
-        px0, py0, pw, ph = 160, 16, w - 170, h - 24
+        px0, py0, pw, ph = 190, 16, w - 200, h - 24
         c.create_rectangle(px0, py0, px0 + pw, py0 + ph, fill="#131b2e", outline="#334155")
         c.create_text(px0 + pw // 2, py0 - 7, text="2D Map: Flat Cubic z(t) (Cyan) vs Followed Path (Green)", fill="#00e5ff", font=("Segoe UI", 7, "bold"))
 
@@ -984,8 +1038,8 @@ class DebugApp:
                 # Pure native display: No processing, instant in-memory blit (<2.5ms)
                 rgb = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2RGB)
                 pil_img = Image.fromarray(rgb)
-                if pil_img.size != (380, 214):
-                    pil_img = pil_img.resize((380, 214), Image.NEAREST)
+                if pil_img.size != (560, 315):
+                    pil_img = pil_img.resize((560, 315), Image.NEAREST)
                 self._tk_cam_img = ImageTk.PhotoImage(pil_img)
                 self.cam_label.configure(image=self._tk_cam_img)
                 got_frame = True
@@ -1013,8 +1067,8 @@ class DebugApp:
                     raw_data = f.read()
                 if raw_data and len(raw_data) > 500:
                     pil_img = Image.open(io.BytesIO(raw_data))
-                    if pil_img.size != (380, 214):
-                        pil_img = pil_img.resize((380, 214), Image.NEAREST)
+                    if pil_img.size != (560, 315):
+                        pil_img = pil_img.resize((560, 315), Image.NEAREST)
                     self._tk_cam_img = ImageTk.PhotoImage(pil_img)
                     self.cam_label.configure(image=self._tk_cam_img)
                     got_frame = True
@@ -1022,9 +1076,9 @@ class DebugApp:
                 pass
 
         if not got_frame and self._tk_cam_img is None:
-            blank = Image.new("RGB", (380, 214), (15, 21, 32))
+            blank = Image.new("RGB", (560, 315), (15, 21, 32))
             draw = ImageDraw.Draw(blank)
-            draw.text((35, 100), "Waiting for Camera Stream (Zero Latency)...", fill=(0, 229, 255))
+            draw.text((120, 145), "Waiting for Camera Stream (Zero Latency)...", fill=(0, 229, 255))
             self._tk_cam_img = ImageTk.PhotoImage(blank)
             self.cam_label.configure(image=self._tk_cam_img)
 

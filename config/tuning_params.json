@@ -2,7 +2,7 @@
   "target_tag_id": 3,
   "sweep_wz_rad": 0.35,
   "align_wz_max": 0.45,
-  "v_max_mps": 0.28,
+  "v_max_mps": 0.35,
   "v_min_mps": 0.08,
   "chase_wz_max": 0.45,
   "turn_radius_m": 0.35,
