@@ -44,6 +44,197 @@ def solve_flat_polynomial(z0: float, zdot0: float, zf: float, zdotf: float, T: f
     return np.linalg.solve(M, b)
 
 
+def compute_boundary_matrix(T: float) -> np.ndarray:
+    """Returns the 4x4 boundary condition matrix M(T) for cubic polynomial trajectory."""
+    T = max(float(T), 0.1)
+    return np.array([
+        [1.0, 0.0, 0.0,     0.0],
+        [0.0, 1.0, 0.0,     0.0],
+        [1.0, T,   T**2,    T**3],
+        [0.0, 1.0, 2.0 * T, 3.0 * (T**2)],
+    ], dtype=np.float64)
+
+
+def compute_boundary_matrix_inv(T: float) -> np.ndarray:
+    """Returns the exact analytical 4x4 inverse boundary matrix M(T)^(-1)."""
+    T = max(float(T), 0.1)
+    T2 = T * T
+    T3 = T2 * T
+    return np.array([
+        [1.0,        0.0,       0.0,        0.0],
+        [0.0,        1.0,       0.0,        0.0],
+        [-3.0 / T2, -2.0 / T,   3.0 / T2,  -1.0 / T],
+        [ 2.0 / T3,  1.0 / T2, -2.0 / T3,   1.0 / T2],
+    ], dtype=np.float64)
+
+
+def get_mecanum_jacobian(r: float = WHEEL_RADIUS_R, Lc: float = CHASSIS_RADIUS_LC) -> np.ndarray:
+    """
+    Returns the 4x2 Mecanum Inverse Kinematics Jacobian matrix J:
+        [w1, w2, w3, w4]^T = J * [vx, wz]^T
+        J = 1/r * [[1,  Lc],
+                   [1, -Lc],
+                   [1, -Lc],
+                   [1,  Lc]]
+    """
+    return (1.0 / float(r)) * np.array([
+        [1.0,  float(Lc)],
+        [1.0, -float(Lc)],
+        [1.0, -float(Lc)],
+        [1.0,  float(Lc)],
+    ], dtype=np.float64)
+
+
+def compute_trajectory_matrices(
+    d0: float,
+    bearing_rad: float,
+    skew_rad: float,
+    standoff_m: float = 0.20,
+    v0: float = 0.16,
+    v_max: float = 0.38,
+) -> dict:
+    """
+    Computes all mathematical matrices, boundary vectors, solved polynomial
+    coefficients, and closed-form equations for Assessment 2 differential flatness.
+    """
+    T = compute_time_horizon(d0, v_max=v_max)
+    x_tag = d0 * math.cos(bearing_rad)
+    y_tag = d0 * math.sin(bearing_rad)
+    goal_heading = wrap_angle(bearing_rad - 0.75 * skew_rad)
+    xf = max(0.08, x_tag - standoff_m * math.cos(goal_heading))
+    yf = y_tag - standoff_m * math.sin(goal_heading)
+
+    M = compute_boundary_matrix(T)
+    M_inv = compute_boundary_matrix_inv(T)
+    bx = np.array([0.0, float(v0), float(xf), 0.0], dtype=np.float64)
+    by = np.array([0.0, 0.0,       float(yf), 0.0], dtype=np.float64)
+
+    alpha_x = M_inv @ bx
+    alpha_y = M_inv @ by
+    J = get_mecanum_jacobian()
+
+    # Format analytical polynomial equation strings
+    def _poly_str(coeffs, var="t"):
+        terms = []
+        terms.append(f"{coeffs[0]:+.4f}")
+        terms.append(f"{coeffs[1]:+.4f}*{var}")
+        terms.append(f"{coeffs[2]:+.4f}*{var}^2")
+        terms.append(f"{coeffs[3]:+.4f}*{var}^3")
+        return " ".join(terms)
+
+    def _vel_str(coeffs, var="t"):
+        return f"{coeffs[1]:+.4f} + ({2.0*coeffs[2]:+.4f})*{var} + ({3.0*coeffs[3]:+.4f})*{var}^2"
+
+    def _acc_str(coeffs, var="t"):
+        return f"{2.0*coeffs[2]:+.4f} + ({6.0*coeffs[3]:+.4f})*{var}"
+
+    eq_x = _poly_str(alpha_x)
+    eq_xdot = _vel_str(alpha_x)
+    eq_xddot = _acc_str(alpha_x)
+
+    eq_y = _poly_str(alpha_y)
+    eq_ydot = _vel_str(alpha_y)
+    eq_yddot = _acc_str(alpha_y)
+
+    return {
+        "d0_m": round(float(d0), 4),
+        "bearing_deg": round(math.degrees(bearing_rad), 2),
+        "skew_deg": round(math.degrees(skew_rad), 2),
+        "standoff_m": round(float(standoff_m), 4),
+        "T_s": round(float(T), 4),
+        "goal_pose": {"xf_m": round(float(xf), 4), "yf_m": round(float(yf), 4), "heading_deg": round(math.degrees(goal_heading), 2)},
+        "boundary_matrix_M": M.tolist(),
+        "boundary_matrix_M_inv": M_inv.tolist(),
+        "boundary_vector_bx": bx.tolist(),
+        "boundary_vector_by": by.tolist(),
+        "coefficients_alpha_x": alpha_x.tolist(),
+        "coefficients_alpha_y": alpha_y.tolist(),
+        "jacobian_J": J.tolist(),
+        "motor_params": {"Kv": KV_BACK_EMF, "Ka": KA_INERTIA, "r": WHEEL_RADIUS_R, "Lc": CHASSIS_RADIUS_LC},
+        "equations": {
+            "x_t": f"x(t) = {eq_x}",
+            "xdot_t": f"x_dot(t) = {eq_xdot}",
+            "xddot_t": f"x_ddot(t) = {eq_xddot}",
+            "y_t": f"y(t) = {eq_y}",
+            "ydot_t": f"y_dot(t) = {eq_ydot}",
+            "yddot_t": f"y_ddot(t) = {eq_yddot}",
+            "speed_v_t": "v(t) = sqrt(x_dot(t)^2 + y_dot(t)^2)",
+            "omega_wz_t": "omega(t) = (x_dot*y_ddot - y_dot*x_ddot) / (x_dot^2 + y_dot^2)",
+            "motor_voltage_V_i": "V_i(t) = 0.380 * omega_i(t) + 0.060 * (d_omega_i / dt)",
+        }
+    }
+
+
+def format_trajectory_report(traj_meta: dict) -> str:
+    """
+    Renders a clean, formatted ASCII mathematical report of the matrices and equations.
+    """
+    T = traj_meta["T_s"]
+    M = np.array(traj_meta["boundary_matrix_M"])
+    M_inv = np.array(traj_meta["boundary_matrix_M_inv"])
+    bx = np.array(traj_meta["boundary_vector_bx"])
+    by = np.array(traj_meta["boundary_vector_by"])
+    ax = np.array(traj_meta["coefficients_alpha_x"])
+    ay = np.array(traj_meta["coefficients_alpha_y"])
+    J = np.array(traj_meta["jacobian_J"])
+    eqs = traj_meta["equations"]
+    gp = traj_meta["goal_pose"]
+
+    lines = []
+    lines.append("=" * 78)
+    lines.append("   KFUPM SCE 672: ADVANCED ROBOTICS — ASSESSMENT 2 (TRAJECTORY MATRICES)")
+    lines.append("=" * 78)
+    lines.append(f"Initial Tag Distance d0   : {traj_meta['d0_m']:.3f} m")
+    lines.append(f"Tag Bearing Angle         : {traj_meta['bearing_deg']:+.2f} deg")
+    lines.append(f"Target Surface Skew       : {traj_meta['skew_deg']:+.2f} deg")
+    lines.append(f"Trajectory Duration T     : {T:.3f} s")
+    lines.append(f"Target Standoff Point     : x_f = {gp['xf_m']:.3f} m, y_f = {gp['yf_m']:.3f} m")
+    lines.append("-" * 78)
+    lines.append("1. BOUNDARY VALUE SYSTEM: M(T) * alpha = b")
+    lines.append("   where z_j(t) = alpha_0 + alpha_1*t + alpha_2*t^2 + alpha_3*t^3")
+    lines.append("")
+    lines.append("   Boundary Matrix M(T) [4x4]:")
+    for row in M:
+        lines.append(f"     [ {row[0]:8.4f}  {row[1]:8.4f}  {row[2]:10.4f}  {row[3]:12.4f} ]")
+    lines.append("")
+    lines.append("   Inverted Boundary Matrix M(T)^(-1) [4x4]:")
+    for row in M_inv:
+        lines.append(f"     [ {row[0]:8.4f}  {row[1]:8.4f}  {row[2]:10.4f}  {row[3]:12.4f} ]")
+    lines.append("")
+    lines.append("   Boundary Vectors:")
+    lines.append(f"     b_x = [ {bx[0]:.3f},  {bx[1]:.3f},  {bx[2]:.3f},  {bx[3]:.3f} ]^T   (x(0), x_dot(0), x(T), x_dot(T))")
+    lines.append(f"     b_y = [ {by[0]:.3f},  {by[1]:.3f},  {by[2]:.3f},  {by[3]:.3f} ]^T   (y(0), y_dot(0), y(T), y_dot(T))")
+    lines.append("")
+    lines.append("2. SOLVED POLYNOMIAL COEFFICIENT VECTORS:")
+    lines.append(f"     alpha_x = M^(-1) * b_x = [ {ax[0]:+.5f},  {ax[1]:+.5f},  {ax[2]:+.5f},  {ax[3]:+.5f} ]^T")
+    lines.append(f"     alpha_y = M^(-1) * b_y = [ {ay[0]:+.5f},  {ay[1]:+.5f},  {ay[2]:+.5f},  {ay[3]:+.5f} ]^T")
+    lines.append("-" * 78)
+    lines.append("3. CLOSED-FORM ANALYTICAL TRAJECTORY EQUATIONS:")
+    lines.append(f"   {eqs['x_t']}")
+    lines.append(f"   {eqs['xdot_t']}")
+    lines.append(f"   {eqs['xddot_t']}")
+    lines.append(f"   {eqs['y_t']}")
+    lines.append(f"   {eqs['ydot_t']}")
+    lines.append(f"   {eqs['yddot_t']}")
+    lines.append("")
+    lines.append("4. DIFFERENTIAL FLATNESS INVERSION TO ROBOT BODY COMMANDS (Eq. 1):")
+    lines.append(f"   Forward Speed    : {eqs['speed_v_t']}")
+    lines.append(f"   Yaw Turn Rate    : {eqs['omega_wz_t']}")
+    lines.append("   Lateral Velocity : vy(t) = 0.000 m/s (STRICTLY NONHOLONOMIC - NO STRAFING)")
+    lines.append("-" * 78)
+    lines.append("5. MECANUM INVERSE KINEMATICS JACOBIAN (Eq. 4):")
+    lines.append("   [w1, w2, w3, w4]^T = J * [vx, wz]^T,   where r = 0.05m, Lc = 0.20m")
+    lines.append("   Jacobian Matrix J [4x2]:")
+    for row in J:
+        lines.append(f"     [ {row[0]:6.2f}  {row[1]:+6.2f} ]")
+    lines.append("-" * 78)
+    lines.append("6. MOTOR ARMATURE VOLTAGE MODEL (Eq. 5):")
+    lines.append(f"   {eqs['motor_voltage_V_i']}")
+    lines.append("   Parameters: Kv = 0.380 V*s/rad, Ka = 0.060 V*s^2/rad")
+    lines.append("=" * 78)
+    return "\n".join(lines)
+
+
 # =============================================================================
 # Problem 2(iii): Dynamic Time Horizon Scaling (Eq. 3)
 # =============================================================================

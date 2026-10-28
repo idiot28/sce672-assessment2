@@ -1,0 +1,57 @@
+==============================================================================
+   KFUPM SCE 672: ADVANCED ROBOTICS — ASSESSMENT 2 (TRAJECTORY MATRICES)
+==============================================================================
+Initial Tag Distance d0   : 1.500 m
+Tag Bearing Angle         : +0.00 deg
+Target Surface Skew       : +0.00 deg
+Trajectory Duration T     : 5.474 s
+Target Standoff Point     : x_f = 1.300 m, y_f = 0.000 m
+------------------------------------------------------------------------------
+1. BOUNDARY VALUE SYSTEM: M(T) * alpha = b
+   where z_j(t) = alpha_0 + alpha_1*t + alpha_2*t^2 + alpha_3*t^3
+
+   Boundary Matrix M(T) [4x4]:
+     [   1.0000    0.0000      0.0000        0.0000 ]
+     [   0.0000    1.0000      0.0000        0.0000 ]
+     [   1.0000    5.4737     29.9612      163.9983 ]
+     [   0.0000    1.0000     10.9474       89.8837 ]
+
+   Inverted Boundary Matrix M(T)^(-1) [4x4]:
+     [   1.0000    0.0000      0.0000        0.0000 ]
+     [   0.0000    1.0000      0.0000        0.0000 ]
+     [  -0.1001   -0.3654      0.1001       -0.1827 ]
+     [   0.0122    0.0334     -0.0122        0.0334 ]
+
+   Boundary Vectors:
+     b_x = [ 0.000,  0.060,  1.300,  0.000 ]^T   (x(0), x_dot(0), x(T), x_dot(T))
+     b_y = [ 0.000,  0.000,  0.000,  0.000 ]^T   (y(0), y_dot(0), y(T), y_dot(T))
+
+2. SOLVED POLYNOMIAL COEFFICIENT VECTORS:
+     alpha_x = M^(-1) * b_x = [ +0.00000,  +0.06000,  +0.10825,  -0.01385 ]^T
+     alpha_y = M^(-1) * b_y = [ +0.00000,  +0.00000,  +0.00000,  +0.00000 ]^T
+------------------------------------------------------------------------------
+3. CLOSED-FORM ANALYTICAL TRAJECTORY EQUATIONS:
+   x(t) = +0.0000 +0.0600*t +0.1082*t^2 -0.0139*t^3
+   x_dot(t) = +0.0600 + (+0.2165)*t + (-0.0416)*t^2
+   x_ddot(t) = +0.2165 + (-0.0831)*t
+   y(t) = +0.0000 +0.0000*t +0.0000*t^2 +0.0000*t^3
+   y_dot(t) = +0.0000 + (+0.0000)*t + (+0.0000)*t^2
+   y_ddot(t) = +0.0000 + (+0.0000)*t
+
+4. DIFFERENTIAL FLATNESS INVERSION TO ROBOT BODY COMMANDS (Eq. 1):
+   Forward Speed    : v(t) = sqrt(x_dot(t)^2 + y_dot(t)^2)
+   Yaw Turn Rate    : omega(t) = (x_dot*y_ddot - y_dot*x_ddot) / (x_dot^2 + y_dot^2)
+   Lateral Velocity : vy(t) = 0.000 m/s (STRICTLY NONHOLONOMIC - NO STRAFING)
+------------------------------------------------------------------------------
+5. MECANUM INVERSE KINEMATICS JACOBIAN (Eq. 4):
+   [w1, w2, w3, w4]^T = J * [vx, wz]^T,   where r = 0.05m, Lc = 0.20m
+   Jacobian Matrix J [4x2]:
+     [  20.00   +4.00 ]
+     [  20.00   -4.00 ]
+     [  20.00   -4.00 ]
+     [  20.00   +4.00 ]
+------------------------------------------------------------------------------
+6. MOTOR ARMATURE VOLTAGE MODEL (Eq. 5):
+   V_i(t) = 0.380 * omega_i(t) + 0.060 * (d_omega_i / dt)
+   Parameters: Kv = 0.380 V*s/rad, Ka = 0.060 V*s^2/rad
+==============================================================================

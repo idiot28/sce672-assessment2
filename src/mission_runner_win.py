@@ -41,6 +41,8 @@ from flatness_math import (
     evaluate_flatness,
     wheel_kinematics,
     motor_voltages,
+    compute_trajectory_matrices,
+    format_trajectory_report,
 )
 from vision_camera import (
     CameraAprilTagDetector,
@@ -304,6 +306,7 @@ class WindowsMissionRunner:
         self.alpha_y = np.zeros(4)
         self.cubic_T = 3.5
         self.planned_path_pts = []
+        self.trajectory_analysis = {}
 
         # Velocities & Motor Voltage State (Strictly nonholonomic: vy = 0.0)
         self.vx = 0.0
@@ -658,6 +661,15 @@ class WindowsMissionRunner:
             v_max=self.v_max,
         )
 
+        self.trajectory_analysis = compute_trajectory_matrices(
+            d0=d0,
+            bearing_rad=bearing_rad,
+            skew_rad=skew_rad,
+            standoff_m=self.standoff_m,
+            v0=v0,
+            v_max=self.v_max,
+        )
+
         pts = []
         c_yaw = math.cos(self.odom_yaw)
         s_yaw = math.sin(self.odom_yaw)
@@ -670,10 +682,7 @@ class WindowsMissionRunner:
         self.planned_path_pts = pts
 
         if log_plan:
-            print(
-                f"[CUBIC REPLANNED] d={d0:.2f}m, brg={math.degrees(bearing_rad):+.1f}deg, "
-                f"skew={math.degrees(skew_rad):+.1f}deg -> Goal (xf={xf:.2f}m, yf={yf:.2f}m), T={self.cubic_T:.2f}s"
-            )
+            print("\n" + format_trajectory_report(self.trajectory_analysis) + "\n")
 
     # =========================================================================
     # 20 Hz Supervisory FSM Control Step (Strictly Nonholonomic: vy = 0.0)
@@ -1094,6 +1103,7 @@ class WindowsMissionRunner:
                     "planned_path": self.planned_path_pts,
                     "odom_trail": self.odom_trail[-60:],
                     "table1": self.table1_rows[-18:],
+                    "trajectory_analysis": self.trajectory_analysis,
                 }
 
             img_tmp = os.path.join(self.output_dir, "live_camera_tmp.jpg")
@@ -1200,7 +1210,15 @@ class WindowsMissionRunner:
                 import datetime
                 from run_archiver import archive_run
                 run_tag = f"run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_tag{self.target_tag_id}"
-                archive_run(run_tag, t1_path, c_path, target_tag_id=self.target_tag_id, d0=getattr(self, 'd0_measured', 1.50))
+                archive_run(
+                    run_tag,
+                    t1_path,
+                    c_path,
+                    target_tag_id=self.target_tag_id,
+                    d0=getattr(self, 'd0_measured', 1.50),
+                    standoff=self.standoff_m,
+                    trajectory_meta=getattr(self, 'trajectory_analysis', None)
+                )
             except Exception as e:
                 print(f"[!] Auto-archive error: {e}")
         except Exception:

@@ -27,6 +27,8 @@ from tkinter import ttk
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from PIL import Image, ImageTk, ImageDraw
 
+from flatness_math import format_trajectory_report, compute_trajectory_matrices
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..")) if os.path.basename(SCRIPT_DIR) == "src" else SCRIPT_DIR
 BASE_DIR = PROJECT_DIR
@@ -122,6 +124,7 @@ class DebugApp:
         self.pressed_keys = set()
         self._was_wasd_moving = False
         self.wasd_btns = {}
+        self._last_trajectory_analysis = {}
 
         self._build_ui()
         self._bind_keyboard()
@@ -457,6 +460,44 @@ class DebugApp:
             self.volt_labels.append(vl)
             self.wheel_labels.append(wl)
 
+        # 3b. Trajectory Matrices & Closed-Form Equations Card
+        traj_card = tk.Frame(col3, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=6, pady=3)
+        traj_card.pack(fill=tk.X, pady=(0, 4))
+
+        traj_top = tk.Frame(traj_card, bg="#151c28")
+        traj_top.pack(fill=tk.X)
+        tk.Label(
+            traj_top, text="📐 DIFFERENTIAL FLATNESS CUBIC EQUATIONS & MATRICES",
+            fg="#00e5ff", bg="#151c28", font=("Segoe UI", 7, "bold")
+        ).pack(side=tk.LEFT)
+
+        tk.Button(
+            traj_top, text="📄 View Full Matrices", bg="#0284c7", fg="#ffffff",
+            activebackground="#0369a1", font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=6, pady=1,
+            command=self._show_matrix_window
+        ).pack(side=tk.RIGHT)
+
+        poly_box = tk.Frame(traj_card, bg="#0f1520", highlightbackground="#283347", highlightthickness=1, padx=4, pady=2)
+        poly_box.pack(fill=tk.X, pady=(2, 0))
+
+        self.lbl_traj_x = tk.Label(
+            poly_box, text="x(t) = +0.0000 +0.1600*t +0.0000*t² -0.0000*t³",
+            fg="#00e676", bg="#0f1520", font=("Consolas", 8, "bold"), anchor="w"
+        )
+        self.lbl_traj_x.pack(fill=tk.X)
+
+        self.lbl_traj_y = tk.Label(
+            poly_box, text="y(t) = +0.0000 +0.0000*t +0.0000*t² -0.0000*t³",
+            fg="#38bdf8", bg="#0f1520", font=("Consolas", 8), anchor="w"
+        )
+        self.lbl_traj_y.pack(fill=tk.X)
+
+        self.lbl_traj_meta = tk.Label(
+            poly_box, text="M(T) [4x4] Inverted | T = 3.50s | J = [[20, 4], [20, -4]] | Kv=0.380, Ka=0.060",
+            fg="#94a3b8", bg="#0f1520", font=("Consolas", 7), anchor="w"
+        )
+        self.lbl_traj_meta.pack(fill=tk.X)
+
         # 4. Table 1 Motor Voltage Log (with Scrollbar and full expansion)
         t1_card = tk.Frame(col3, bg="#151c28", highlightbackground="#283347", highlightthickness=1, padx=6, pady=4)
         t1_card.pack(fill=tk.BOTH, expand=True)
@@ -572,6 +613,46 @@ class DebugApp:
         self.tuning["target_tag_id"] = int(tid)
         save_tuning_and_notify(self.tuning, force_arm_move=False)
         send_gui_command("set_tag", target_tag_id=tid)
+
+    def _show_matrix_window(self):
+        win = tk.Toplevel(self.root)
+        win.title("Assessment 2 — Boundary Value Trajectory Matrices & Equations")
+        win.geometry("820x640")
+        win.configure(bg="#0b0f17")
+
+        top_f = tk.Frame(win, bg="#151c28", padx=10, pady=8)
+        top_f.pack(fill=tk.X)
+        tk.Label(
+            top_f, text="📐 DIFFERENTIAL FLATNESS BOUNDARY MATRICES & CLOSED-FORM EQUATIONS",
+            fg="#00e5ff", bg="#151c28", font=("Segoe UI", 10, "bold")
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            top_f, text="✕ Close", bg="#dc2626", fg="#ffffff", font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT, padx=8, pady=2, command=win.destroy
+        ).pack(side=tk.RIGHT)
+
+        txt_frame = tk.Frame(win, bg="#0f1520", padx=6, pady=6)
+        txt_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        scroll = tk.Scrollbar(txt_frame, orient=tk.VERTICAL)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        txt = tk.Text(
+            txt_frame, bg="#0f1520", fg="#00e5ff", font=("Consolas", 9),
+            relief=tk.FLAT, yscrollcommand=scroll.set, padx=8, pady=8
+        )
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.config(command=txt.yview)
+
+        meta = self._last_trajectory_analysis
+        if meta and "boundary_matrix_M" in meta:
+            report_str = format_trajectory_report(meta)
+        else:
+            meta = compute_trajectory_matrices(1.50, 0.0, 0.0)
+            report_str = format_trajectory_report(meta)
+
+        txt.insert(tk.END, report_str)
+        txt.configure(state=tk.DISABLED)
 
     def _draw_radar_and_path(self, d: dict):
         c = self.map_canvas
@@ -739,6 +820,20 @@ class DebugApp:
                     self.t1_text.insert(tk.END, line)
                 self.t1_text.see(tk.END)
                 self.t1_text.configure(state=tk.DISABLED)
+
+                # Update Trajectory Matrices & Equations Card
+                t_meta = d.get("trajectory_analysis", {})
+                if t_meta:
+                    self._last_trajectory_analysis = t_meta
+                    eqs = t_meta.get("equations", {})
+                    if eqs:
+                        self.lbl_traj_x.configure(text=eqs.get("x_t", ""))
+                        self.lbl_traj_y.configure(text=eqs.get("y_t", ""))
+                    T_val = t_meta.get("T_s", 0.0)
+                    mp = t_meta.get("motor_params", {})
+                    self.lbl_traj_meta.configure(
+                        text=f"M(T) [4x4] Inverted | T = {T_val:.2f}s | J: [20, ±4] | Kv={mp.get('Kv', 0.380)}, Ka={mp.get('Ka', 0.060)}"
+                    )
 
                 self._draw_radar_and_path(d)
             except Exception:

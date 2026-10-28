@@ -44,6 +44,8 @@ from rm_flatness_nav.flatness_math import (
     evaluate_flatness,
     wheel_kinematics,
     motor_voltages,
+    compute_trajectory_matrices,
+    format_trajectory_report,
 )
 from rm_flatness_nav.vision_tof import (
     FrontToFSelector,
@@ -243,6 +245,7 @@ class FlatnessMissionNode(Node):
         self.alpha_y = np.zeros(4)
         self.cubic_T = 3.5
         self.planned_path_pts = []
+        self.trajectory_analysis = {}
 
         # Nonholonomic Velocities & Motor Voltage State (vy is ALWAYS 0.0)
         self.vx = 0.0
@@ -619,6 +622,15 @@ class FlatnessMissionNode(Node):
             v_max=self.v_max,
         )
 
+        self.trajectory_analysis = compute_trajectory_matrices(
+            d0=d0,
+            bearing_rad=bearing_rad,
+            skew_rad=skew_rad,
+            standoff_m=self.standoff_m,
+            v0=v0,
+            v_max=self.v_max,
+        )
+
         # Update planned path points in world frame for real-time GUI visualization
         pts = []
         c_yaw = math.cos(self.odom_yaw)
@@ -632,10 +644,7 @@ class FlatnessMissionNode(Node):
         self.planned_path_pts = pts
 
         if log_plan:
-            self.get_logger().info(
-                f"[CUBIC PATH REPLANNED] d={d0:.2f}m, brg={math.degrees(bearing_rad):+.1f}deg, "
-                f"skew={math.degrees(skew_rad):+.1f}deg -> Local Goal (xf={xf:.2f}m, yf={yf:.2f}m), T={self.cubic_T:.2f}s"
-            )
+            self.get_logger().info("\n" + format_trajectory_report(self.trajectory_analysis) + "\n")
 
     # =========================================================================
     # 20 Hz Supervisory Control Step (Strictly Nonholonomic: vy = 0.0)
@@ -1127,6 +1136,7 @@ class FlatnessMissionNode(Node):
                     "planned_path": self.planned_path_pts,
                     "odom_trail": self.odom_trail[-60:],
                     "table1": self.table1_rows[-18:],
+                    "trajectory_analysis": self.trajectory_analysis,
                 }
 
             img_tmp = os.path.join(self.output_dir, "live_camera_tmp.jpg")
@@ -1242,7 +1252,15 @@ class FlatnessMissionNode(Node):
                     sys.path.insert(0, self.output_dir)
                 from run_archiver import archive_run
                 run_tag = f"run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_tag{self.target_tag_id}"
-                archive_run(run_tag, t1_path, c_path, target_tag_id=self.target_tag_id, d0=getattr(self, 'd0_measured', 1.50))
+                archive_run(
+                    run_tag,
+                    t1_path,
+                    c_path,
+                    target_tag_id=self.target_tag_id,
+                    d0=getattr(self, 'd0_measured', 1.50),
+                    standoff=self.standoff_m,
+                    trajectory_meta=getattr(self, 'trajectory_analysis', None)
+                )
             except Exception as e:
                 self.get_logger().warn(f"[!] Auto-archive warning: {e}")
         except Exception:
