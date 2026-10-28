@@ -324,6 +324,9 @@ class WindowsMissionRunner:
         if target_tag_id is not None:
             self.target_tag_id = int(target_tag_id)
 
+        # Pre-compute nominal planned path so it is drawn immediately before mission starts
+        self._replan_cubic_to_tag(1.50, 0.0, 0.0, v_curr=self.v_min, log_plan=False)
+
         # Initialize Hardware or Simulation
         self._init_hardware_or_sim()
 
@@ -949,6 +952,12 @@ class WindowsMissionRunner:
                 wz_cmd = 0.0
                 self._halted = True
 
+            # Continuously update planned path preview while in TELEOP
+            if vis:
+                self._replan_cubic_to_tag(self.tag_dist_m, self.tag_bearing_rad, self.tag_skew_rad, v_curr=self.v_min, log_plan=False)
+            elif mem_rel is not None:
+                self._replan_cubic_to_tag(mem_rel[0], mem_rel[1], mem_rel[2], v_curr=self.v_min, log_plan=False)
+
         elif self.estop_paused:
             vx_cmd, wz_cmd = 0.0, 0.0
             self._halted = True
@@ -993,15 +1002,24 @@ class WindowsMissionRunner:
             else:
                 wz_cmd = float(self.sweep_wz_rad)
 
-            # Standoff Guard in ALIGNING: if already at standoff, halt immediately
-            cam_triggered = vis and (self.tag_dist_m <= (self.standoff_m + 0.02))
-            close_to_goal = dist <= (self.standoff_m + 0.02)
-            if (cam_triggered or close_to_goal) and abs(bearing) <= 0.18:
-                vx_cmd, wz_cmd = 0.0, 0.0
-                self.state = "ARRIVED (20cm)"
-                self.state_time = now
-                self._halted = True
-                print(f"[ARRIVED] Tag {self.target_tag_id} reached at 20 cm standoff fully aligned!")
+            # Standoff Guard in ALIGNING: if already at standoff, ensure facing tag squarely
+            cam_triggered = vis and (self.tag_dist_m <= (self.standoff_m + 0.025))
+            close_to_goal = dist <= (self.standoff_m + 0.025)
+            if (cam_triggered or close_to_goal):
+                if abs(bearing) <= 0.030:
+                    vx_cmd, wz_cmd = 0.0, 0.0
+                    self.state = "ARRIVED (20cm)"
+                    self.state_time = now
+                    self._halted = True
+                    print(f"[ARRIVED] Tag {self.target_tag_id} reached at 20 cm standoff squarely facing tag!")
+                else:
+                    vx_cmd = 0.0
+                    w_lim = min(0.32, float(self.align_wz_max))
+                    wz_cmd = float(np.clip(self.kp_bearing * bearing, -w_lim, w_lim))
+                    if abs(bearing) > 0.03 and abs(wz_cmd) < 0.12:
+                        wz_cmd = math.copysign(0.12, bearing)
+                    self.state = "ALIGNING_FINAL"
+                    self.state_time = now
             elif (vis and abs(bearing) <= 0.22) or (mem_rel is not None and abs(mem_rel[1]) <= 0.16 and in_state_s >= 0.4):
                 with self.lock:
                     self._replan_cubic_to_tag(dist, bearing, skew, v_curr=self.v_min, log_plan=True)
@@ -1014,16 +1032,25 @@ class WindowsMissionRunner:
         elif self.state == "CHASING":
             dist_err = dist - self.standoff_m
 
-            # Standoff Guard in CHASING: brake immediately at 20 cm
-            # Because the cubic path enforces arrival tangent alignment (Eq. 2), the robot is already aligned!
-            cam_triggered = vis and (self.tag_dist_m <= (self.standoff_m + 0.02))
-            close_to_goal = dist <= (self.standoff_m + 0.02)
-            if dist_err <= 0.015 or close_to_goal or cam_triggered:
-                vx_cmd, wz_cmd = 0.0, 0.0
-                self.state = "ARRIVED (20cm)"
-                self.state_time = now
-                self._halted = True
-                print(f"[ARRIVED] Tag {self.target_tag_id} reached at 20 cm standoff fully aligned via flat trajectory!")
+            # Standoff Guard in CHASING: brake forward motion at 20 cm and center heading on tag
+            cam_triggered = vis and (self.tag_dist_m <= (self.standoff_m + 0.025))
+            close_to_goal = dist <= (self.standoff_m + 0.025)
+            if dist_err <= 0.020 or close_to_goal or cam_triggered:
+                if abs(bearing) <= 0.030:
+                    vx_cmd, wz_cmd = 0.0, 0.0
+                    self.state = "ARRIVED (20cm)"
+                    self.state_time = now
+                    self._halted = True
+                    print(f"[ARRIVED] Tag {self.target_tag_id} reached at {dist:.2f}m standoff, squarely facing Tag {self.target_tag_id} (bearing={math.degrees(bearing):+.1f}deg)!")
+                else:
+                    vx_cmd = 0.0
+                    w_lim = min(0.32, float(self.align_wz_max))
+                    wz_cmd = float(np.clip(self.kp_bearing * bearing, -w_lim, w_lim))
+                    if abs(bearing) > 0.03 and abs(wz_cmd) < 0.12:
+                        wz_cmd = math.copysign(0.12, bearing)
+                    self.state = "ALIGNING_FINAL"
+                    self.state_time = now
+                    print(f"[ALIGNING_FINAL] At 20cm standoff (d={dist:.2f}m). Centering heading to squarely face Tag {self.target_tag_id} (brg={math.degrees(bearing):+.1f}deg)...")
             elif (not vis_recent and mem_rel is None) or abs(bearing) > math.radians(65.0):
                 vx_cmd = 0.0
                 self.state = "ALIGNING"
@@ -1055,6 +1082,31 @@ class WindowsMissionRunner:
                 eff_wz_max = float(self.chase_wz_max)
                 steer_cmd = w_ff + 1.25 * cubic_heading + 0.35 * (bearing - skew)
                 wz_cmd = float(np.clip(steer_cmd, -eff_wz_max, eff_wz_max))
+
+        # ---------------------------------------------------------------------
+        # 4. ALIGNING_FINAL: Zero-Forward-Speed Terminal Heading Alignment to Face Tag
+        # ---------------------------------------------------------------------
+        elif self.state == "ALIGNING_FINAL":
+            dist_err = dist - self.standoff_m
+            vx_cmd = 0.0
+            if dist_err > 0.030:
+                vx_cmd = 0.04
+            elif dist_err < -0.015:
+                vx_cmd = -0.04
+
+            w_lim = min(0.32, float(self.align_wz_max))
+            w_min = 0.12
+
+            if abs(bearing) <= 0.030 or in_state_s >= 2.2:
+                vx_cmd, wz_cmd = 0.0, 0.0
+                self.state = "ARRIVED (20cm)"
+                self.state_time = now
+                self._halted = True
+                print(f"[ARRIVED] Final pose centered! Robot squarely facing Tag {self.target_tag_id} at {dist:.2f}m standoff (bearing={math.degrees(bearing):+.1f}deg)!")
+            else:
+                wz_cmd = float(np.clip(self.kp_bearing * bearing, -w_lim, w_lim))
+                if abs(bearing) > 0.03 and abs(wz_cmd) < w_min:
+                    wz_cmd = math.copysign(w_min, bearing)
 
         # ---------------------------------------------------------------------
         # 4. FINE_ALIGN: Reverse-and-Forward Nonholonomic Parking Maneuver
@@ -1401,8 +1453,14 @@ class WindowsMissionRunner:
                 print(f"[GUI] RESTARTED MISSION: Visual 360-Sweep for Tag {self.target_tag_id}!")
                 print("=" * 76)
             elif action == "set_tag" and "target_tag_id" in cmd:
-                self.target_tag_id = int(cmd["target_tag_id"])
-                print(f"[GUI] Switched Target Tag to T{self.target_tag_id}.")
+                with self.lock:
+                    self.target_tag_id = int(cmd["target_tag_id"])
+                    mem_rel = self._get_mem_tag_relative(self.target_tag_id)
+                    if mem_rel is not None:
+                        self._replan_cubic_to_tag(mem_rel[0], mem_rel[1], mem_rel[2], v_curr=self.v_min, log_plan=False)
+                    else:
+                        self._replan_cubic_to_tag(1.50, 0.0, 0.0, v_curr=self.v_min, log_plan=False)
+                print(f"[GUI] Switched Target Tag to T{self.target_tag_id} and pre-computed planned path.")
             elif action == "update_params":
                 params = cmd.get("params", {})
                 self._apply_tuning_dict(params, move_arm=True)

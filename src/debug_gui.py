@@ -165,8 +165,11 @@ class DebugApp:
         self._frame_count = 0
         self._fps_time = time.monotonic()
         self._fps_val = 0.0
+        self.tag_buttons = {}
+        self.dialog_tag_buttons = {}
 
         self._build_ui()
+        self._update_tag_buttons()
         self._bind_keyboard()
         self._tk_cam_img = None
         self._update_loop()
@@ -217,13 +220,23 @@ class DebugApp:
         )
         self.btn_teleop_return.pack(side=tk.LEFT, padx=(0, 6))
 
-        for tid in (1, 2, 3):
-            tk.Button(
-                btn_box, text=f"T{tid}", bg="#1e293b", fg="#e2e8f0",
-                activebackground="#334155", activeforeground="#ffffff",
-                font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=6, pady=3,
+        # Target AprilTag Quick Selector
+        tag_f = tk.Frame(btn_box, bg="#111827", highlightbackground="#374151", highlightthickness=1, padx=4, pady=1)
+        tag_f.pack(side=tk.LEFT, padx=(2, 6))
+        tk.Label(
+            tag_f, text="🎯 TARGET:", fg="#00e5ff", bg="#111827", font=("Segoe UI", 8, "bold")
+        ).pack(side=tk.LEFT, padx=(2, 4))
+
+        self.tag_buttons = {}
+        for tid in (1, 2, 3, 4):
+            btn = tk.Button(
+                tag_f, text=f"Tag {tid}", bg="#1e293b", fg="#94a3b8",
+                activebackground="#0369a1", activeforeground="#ffffff",
+                font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2,
                 command=lambda t=tid: self._set_target_tag(t)
-            ).pack(side=tk.LEFT, padx=1)
+            )
+            btn.pack(side=tk.LEFT, padx=1)
+            self.tag_buttons[tid] = btn
 
         tk.Button(
             btn_box, text="↻ RESTART [R]", bg="#0284c7", fg="#ffffff",
@@ -657,9 +670,35 @@ class DebugApp:
         self._push_tuning(force_arm=True)
 
     def _set_target_tag(self, tid: int):
-        self.tuning["target_tag_id"] = int(tid)
+        tid = int(tid)
+        self.tuning["target_tag_id"] = tid
+        self._update_tag_buttons(tid)
         save_tuning_and_notify(self.tuning, force_arm_move=False)
         send_gui_command("set_tag", target_tag_id=tid)
+        if self.runner is not None:
+            with self.runner.lock:
+                self.runner.target_tag_id = tid
+                mem_rel = self.runner._get_mem_tag_relative(tid)
+                if mem_rel is not None:
+                    self.runner._replan_cubic_to_tag(mem_rel[0], mem_rel[1], mem_rel[2], v_curr=self.runner.v_min, log_plan=False)
+                else:
+                    self.runner._replan_cubic_to_tag(1.50, 0.0, 0.0, v_curr=self.runner.v_min, log_plan=False)
+        self.lbl_sync.configure(text=f"● Target: Tag {tid}", fg="#00e5ff")
+        print(f"[GUI] Selected Target AprilTag {tid}!")
+
+    def _update_tag_buttons(self, active_tid: int = None):
+        if active_tid is None:
+            active_tid = int(self.tuning.get("target_tag_id", 3))
+        for tid, btn in getattr(self, "tag_buttons", {}).items():
+            if tid == active_tid:
+                btn.configure(bg="#0284c7", fg="#ffffff", text=f"✓ Tag {tid}")
+            else:
+                btn.configure(bg="#1e293b", fg="#94a3b8", text=f"Tag {tid}")
+        for tid, btn in getattr(self, "dialog_tag_buttons", {}).items():
+            if tid == active_tid:
+                btn.configure(bg="#0284c7", fg="#ffffff", text=f"✓ Tag {tid}")
+            else:
+                btn.configure(bg="#1e293b", fg="#94a3b8", text=f"Tag {tid}")
 
     def _open_tuning_window(self):
         if hasattr(self, 'tuning_win') and self.tuning_win is not None and self.tuning_win.winfo_exists():
@@ -759,6 +798,22 @@ class DebugApp:
             command=lambda: self._push_tuning(force_arm=True)
         ).pack(side=tk.RIGHT)
 
+        # Front Target AprilTag Selector in Dialog
+        tag_sel = tk.Frame(self.tuning_win, bg="#151c28", padx=10, pady=4)
+        tag_sel.pack(fill=tk.X)
+        tk.Label(tag_sel, text="Target AprilTag:", fg="#00e5ff", bg="#151c28", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 6))
+        self.dialog_tag_buttons = {}
+        for tid in (1, 2, 3, 4):
+            btn = tk.Button(
+                tag_sel, text=f"Tag {tid}", bg="#1e293b", fg="#94a3b8",
+                activebackground="#0369a1", activeforeground="#ffffff",
+                font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
+                command=lambda t=tid: self._set_target_tag(t)
+            )
+            btn.pack(side=tk.LEFT, padx=2)
+            self.dialog_tag_buttons[tid] = btn
+        self._update_tag_buttons()
+
         # Front ToF Mode Selector (CAM_ONLY vs AUTO vs CH0..CH3)
         tof_sel = tk.Frame(self.tuning_win, bg="#151c28", padx=10, pady=4)
         tof_sel.pack(fill=tk.X)
@@ -856,7 +911,14 @@ class DebugApp:
         # Right half: 2D Flat Cubic Trajectory & Persistent Odometry Trail Plot
         px0, py0, pw, ph = 190, 16, w - 200, h - 24
         c.create_rectangle(px0, py0, px0 + pw, py0 + ph, fill="#131b2e", outline="#334155")
-        c.create_text(px0 + pw // 2, py0 - 7, text="2D Map: Flat Cubic z(t) (Cyan) vs Followed Path (Green)", fill="#00e5ff", font=("Segoe UI", 7, "bold"))
+        c.create_text(px0 + pw // 2, py0 - 7, text="2D Map: Planned Path z(t) (Cyan Dashed) vs Measured Path (Green Solid)", fill="#00e5ff", font=("Segoe UI", 7, "bold"))
+
+        # In-canvas Color Legend
+        c.create_line(px0 + 8, py0 + 10, px0 + 26, py0 + 10, fill="#00e5ff", width=2, dash=(4, 2))
+        c.create_text(px0 + 30, py0 + 10, text="Plan z(t)", fill="#00e5ff", font=("Segoe UI", 7, "bold"), anchor="w")
+
+        c.create_line(px0 + 95, py0 + 10, px0 + 113, py0 + 10, fill="#00e676", width=2.5)
+        c.create_text(px0 + 117, py0 + 10, text="Measured", fill="#00e676", font=("Segoe UI", 7, "bold"), anchor="w")
 
         # Gather points for dynamic bounding box calculation (never clip points!)
         pts_x = [0.0, 1.50]
@@ -865,6 +927,24 @@ class DebugApp:
         pts_y.append(float(odom[1]))
 
         path_pts = d.get("planned_path", [])
+        if len(path_pts) < 2:
+            # Fallback: compute nominal planned path immediately so it is drawn BEFORE following!
+            tag_w_x = 1.50
+            tag_w_y = 0.0
+            if mem and tgt_id in mem:
+                tinfo = mem[tgt_id]
+                tag_w_x = float(tinfo.get("x", 1.50))
+                tag_w_y = float(tinfo.get("y", 0.0))
+            pts = []
+            rx0, ry0 = float(odom[0]), float(odom[1])
+            gx = tag_w_x - 0.20
+            gy = tag_w_y
+            for i in range(20):
+                s = i / 19.0
+                h = s * s * (3.0 - 2.0 * s)
+                pts.append([round(rx0 + (gx - rx0) * h, 3), round(ry0 + (gy - ry0) * h, 3)])
+            path_pts = pts
+
         for pt in path_pts:
             pts_x.append(pt[0])
             pts_y.append(pt[1])
@@ -902,10 +982,20 @@ class DebugApp:
         c.create_line(px0 + 4, oy0, px0 + pw - 4, oy0, fill="#1e293b", dash=(2, 2))
         c.create_line(ox0, py0 + 4, ox0, py0 + ph - 4, fill="#1e293b", dash=(2, 2))
 
-        # Draw Tag T3 (1.50m) and Standoff (1.30m)
-        tag_x, tag_y = to_canvas(1.50, 0.0)
-        c.create_rectangle(tag_x - 5, tag_y - 8, tag_x + 5, tag_y + 8, fill="#ef4444", outline="#ffffff")
-        c.create_text(tag_x, tag_y - 13, text=f"Tag {tgt_id} (1.5m)", fill="#ef4444", font=("Segoe UI", 6, "bold"))
+        # Draw detected tags or target tag
+        if mem:
+            for tid_k, tinfo in mem.items():
+                tx_w = float(tinfo.get("x", 1.50))
+                ty_w = float(tinfo.get("y", 0.0))
+                u_tag, v_tag = to_canvas(tx_w, ty_w)
+                is_tgt = (str(tid_k) == tgt_id)
+                tag_col = "#ef4444" if is_tgt else "#f59e0b"
+                c.create_rectangle(u_tag - 5, v_tag - 7, u_tag + 5, v_tag + 7, fill=tag_col, outline="#ffffff")
+                c.create_text(u_tag, v_tag - 12, text=f"Tag {tid_k}" + (" (TGT)" if is_tgt else ""), fill=tag_col, font=("Segoe UI", 6, "bold"))
+        else:
+            tag_x, tag_y = to_canvas(1.50, 0.0)
+            c.create_rectangle(tag_x - 5, tag_y - 8, tag_x + 5, tag_y + 8, fill="#ef4444", outline="#ffffff")
+            c.create_text(tag_x, tag_y - 13, text=f"Tag {tgt_id} (1.5m)", fill="#ef4444", font=("Segoe UI", 6, "bold"))
 
         goal_x, goal_y = to_canvas(1.30, 0.0)
         c.create_line(goal_x, goal_y - 10, goal_x, goal_y + 10, fill="#10b981", width=2, dash=(2, 2))
@@ -920,22 +1010,22 @@ class DebugApp:
                     h_coords.extend([u, v])
                 c.create_line(*h_coords, fill="#1e4a38", width=1.5, dash=(3, 2))
 
-        # 2. Draw Planned Flat Cubic Path z(t) (bright cyan, dashed)
+        # 2. Draw Planned Flat Cubic Path z(t) (Electric Cyan, dashed - drawn BEFORE following!)
         if len(path_pts) >= 2:
             flat_coords = []
             for pt in path_pts:
                 u, v = to_canvas(pt[0], pt[1])
                 flat_coords.extend([u, v])
-            c.create_line(*flat_coords, fill="#00e5ff", width=2, dash=(3, 2))
+            c.create_line(*flat_coords, fill="#00e5ff", width=2.5, dash=(4, 2))
 
-        # 3. Draw Active Followed Path (vibrant neon green, solid, persistent)
+        # 3. Draw Active Followed Path (Vibrant Neon Green, solid, persistent)
         active_trail = self.current_trail if len(self.current_trail) >= 2 else trail
         if len(active_trail) >= 2:
             t_coords = []
             for pt in active_trail:
                 u, v = to_canvas(pt[0], pt[1])
                 t_coords.extend([u, v])
-            c.create_line(*t_coords, fill="#00e676", width=2.5)
+            c.create_line(*t_coords, fill="#00e676", width=3.0)
 
         # 4. Draw Start Pose (0, 0)
         c.create_oval(ox0 - 3, oy0 - 3, ox0 + 3, oy0 + 3, fill="#38bdf8", outline="#ffffff")
@@ -978,12 +1068,12 @@ class DebugApp:
             ax.plot(d0, 0.0, 's', color='darkred', markersize=9, markeredgecolor='black', label='Target Tag Center')
             ax.plot(xf, 0.0, 'X', color='darkgreen', markersize=9, markeredgecolor='black', label=f'Standoff Goal (x = {xf:.2f} m)')
 
-            ax.plot(x_plan, y_plan, color='#1565c0', lw=2.5, linestyle='-', label=r'Planned Cubic Flat Path $\mathbf{z}(t)$')
+            ax.plot(x_plan, y_plan, color='#1d4ed8', lw=2.8, linestyle='-', label=r'Planned Cubic Flat Path $\mathbf{z}(t)$ [Blue]')
 
             if trail and len(trail) >= 2:
                 tx = [p[0] for p in trail]
                 ty = [p[1] for p in trail]
-                ax.plot(tx, ty, color='#2e7d32', lw=2.2, linestyle='--', marker='o', markevery=max(1, len(tx)//12), markersize=4.5, label='Actual Followed Path (Hardware)')
+                ax.plot(tx, ty, color='#16a34a', lw=2.2, linestyle='--', marker='o', markevery=max(1, len(tx)//12), markersize=4.5, label='Measured Followed Path [Green]')
 
             for idx, htrail in enumerate(self.history_trails):
                 if len(htrail) >= 2:
@@ -1163,7 +1253,9 @@ class DebugApp:
                         box.configure(highlightbackground="#283347", highlightthickness=1)
                         l_role.configure(text=role, fg="#64748b")
 
-                self.kv_vars["mode"].configure(text=f"{d.get('mode', '-')} | Tag {d.get('target_tag_id', 3)}")
+                tgt_id = int(d.get("target_tag_id", self.tuning.get("target_tag_id", 3)))
+                self._update_tag_buttons(tgt_id)
+                self.kv_vars["mode"].configure(text=f"{d.get('mode', '-')} | Tag {tgt_id}")
                 self.kv_vars["sweep"].configure(text=f"{d.get('sweep_deg', 0.0):.1f}° / 360.0°")
                 self.kv_vars["dist"].configure(
                     text=f"{d.get('fused_dist_m', 0.0):.3f} m (Stop: {d.get('standoff_goal_m', 0.20):.2f} m)",

@@ -157,11 +157,11 @@ def generate_run_plots(
     ax.plot(d0, 0.0, 's', color='darkred', markersize=9, markeredgecolor='black', label=f'Tag T{tag_id} Center')
     ax.plot(xf, 0.0, 'X', color='darkgreen', markersize=9, markeredgecolor='black', label=f'Target Standoff Point ($x = {xf:.2f}$ m)')
 
-    # Planned path
-    ax.plot(x_plan, y_plan, color='#1565c0', lw=2.5, linestyle='-', label=r'Planned Cubic Flat Path $\mathbf{z}(t)$')
+    # Planned path (Distinct Electric Blue)
+    ax.plot(x_plan, y_plan, color='#1d4ed8', lw=2.8, linestyle='-', label=r'Planned Cubic Flat Path $\mathbf{z}(t)$ [Blue]')
 
-    # Actual path
-    ax.plot(x_act_scaled, y_act_scaled, color='#2e7d32', lw=2.2, linestyle='--', marker='o', markevery=15, markersize=4.5, label='Actual Executed Path (Hardware)')
+    # Measured actual path (Distinct Emerald Green)
+    ax.plot(x_act_scaled, y_act_scaled, color='#16a34a', lw=2.2, linestyle='--', marker='o', markevery=15, markersize=4.5, label='Measured Followed Path [Green]')
 
     # Start Point
     ax.plot(0.0, 0.0, 'o', color='black', markersize=8, label='Start Pose $(0, 0)$')

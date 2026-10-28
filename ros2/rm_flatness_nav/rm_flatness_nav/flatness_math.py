@@ -104,12 +104,13 @@ def compute_trajectory_matrices(
     T = compute_time_horizon(d0, v_max=v_max)
     x_tag = d0 * math.cos(bearing_rad)
     y_tag = d0 * math.sin(bearing_rad)
-    goal_heading = wrap_angle(bearing_rad - skew_rad)
+    goal_heading = wrap_angle(bearing_rad - 0.25 * skew_rad) if abs(skew_rad) > 0.04 else bearing_rad
     xf = max(0.08, x_tag - standoff_m * math.cos(goal_heading))
     yf = y_tag - standoff_m * math.sin(goal_heading)
 
-    zdotf_x = vf * math.cos(goal_heading)
-    zdotf_y = vf * math.sin(goal_heading)
+    face_tag_heading = math.atan2(y_tag - yf, max(0.01, x_tag - xf))
+    zdotf_x = vf * math.cos(face_tag_heading)
+    zdotf_y = vf * math.sin(face_tag_heading)
 
     M = compute_boundary_matrix(T)
     M_inv = compute_boundary_matrix_inv(T)
@@ -361,16 +362,17 @@ def plan_aligning_cubic_path(
     x_tag = d0 * math.cos(bearing_rad)
     y_tag = d0 * math.sin(bearing_rad)
 
-    # Desired final heading to face the tag perpendicularly and eliminate skew
-    goal_heading = wrap_angle(bearing_rad - skew_rad)
+    # Desired final heading: point directly at the tag center from standoff
+    goal_heading = wrap_angle(bearing_rad - 0.25 * skew_rad) if abs(skew_rad) > 0.04 else bearing_rad
 
-    # Standoff point 20 cm in front of the tag along its normal axis
+    # Standoff point 20 cm in front of the tag along goal_heading
     xf = max(0.08, x_tag - standoff_m * math.cos(goal_heading))
     yf = y_tag - standoff_m * math.sin(goal_heading)
 
-    # Terminal tangent velocity components aligned with goal_heading
-    zdotf_x = vf * math.cos(goal_heading)
-    zdotf_y = vf * math.sin(goal_heading)
+    # Terminal tangent velocity components aligned directly to face the tag
+    face_tag_heading = math.atan2(y_tag - yf, max(0.01, x_tag - xf))
+    zdotf_x = vf * math.cos(face_tag_heading)
+    zdotf_y = vf * math.sin(face_tag_heading)
 
     # Boundary conditions:
     # Start (t=0): x(0)=0, y(0)=0, moving straight forward: xdot(0)=v0, ydot(0)=0

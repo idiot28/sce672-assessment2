@@ -259,6 +259,9 @@ class FlatnessMissionNode(Node):
         self.continuous_rows = []
         self.last_logged_sec = -1
 
+        # Pre-compute nominal planned path so it is drawn immediately before mission starts
+        self._replan_cubic_to_tag(1.50, 0.0, 0.0, v_curr=self.v_min, log_plan=False)
+
         self._init_hardware_or_sim()
 
         # Decoupled Camera Grabber & Vision Worker Threads for Zero Latency
@@ -913,6 +916,12 @@ class FlatnessMissionNode(Node):
                 wz_cmd = 0.0
                 self._halted = True
 
+            # Continuously update planned path preview while in TELEOP
+            if vis:
+                self._replan_cubic_to_tag(self.tag_dist_m, self.tag_bearing_rad, self.tag_skew_rad, v_curr=self.v_min, log_plan=False)
+            elif mem_rel is not None:
+                self._replan_cubic_to_tag(mem_rel[0], mem_rel[1], mem_rel[2], v_curr=self.v_min, log_plan=False)
+
         elif self.estop_paused:
             vx_cmd, wz_cmd = 0.0, 0.0
             self._halted = True
@@ -963,16 +972,25 @@ class FlatnessMissionNode(Node):
             else:
                 wz_cmd = float(self.sweep_wz_rad)
 
-            # Standoff Guard in ALIGNING: if already at standoff, halt immediately
-            tof_triggered = tof_ok and (self.tof.dist_m <= (self.standoff_m + 0.02))
-            cam_triggered = vis and (self.tag_dist_m <= (self.standoff_m + 0.02))
-            fused_close = dist <= (self.standoff_m + 0.02)
-            if (tof_triggered or cam_triggered or fused_close) and abs(bearing) <= 0.18:
-                vx_cmd, wz_cmd = 0.0, 0.0
-                self.state = "ARRIVED (20cm)"
-                self.state_time = now
-                self._halted = True
-                self.get_logger().info(f"[ARRIVED] Tag {self.target_tag_id} reached at 20 cm standoff fully aligned!")
+            # Standoff Guard in ALIGNING: if already at standoff, ensure facing tag squarely
+            tof_triggered = tof_ok and (self.tof.dist_m <= (self.standoff_m + 0.025))
+            cam_triggered = vis and (self.tag_dist_m <= (self.standoff_m + 0.025))
+            fused_close = dist <= (self.standoff_m + 0.025)
+            if (tof_triggered or cam_triggered or fused_close):
+                if abs(bearing) <= 0.030:
+                    vx_cmd, wz_cmd = 0.0, 0.0
+                    self.state = "ARRIVED (20cm)"
+                    self.state_time = now
+                    self._halted = True
+                    self.get_logger().info(f"[ARRIVED] Tag {self.target_tag_id} reached at 20 cm standoff squarely facing tag!")
+                else:
+                    vx_cmd = 0.0
+                    w_lim = min(0.32, float(self.align_wz_max))
+                    wz_cmd = float(np.clip(self.kp_bearing * bearing, -w_lim, w_lim))
+                    if abs(bearing) > 0.03 and abs(wz_cmd) < 0.12:
+                        wz_cmd = math.copysign(0.12, bearing)
+                    self.state = "ALIGNING_FINAL"
+                    self.state_time = now
             # Transition to CHASING once tag is reasonably in view (or aligned with memory)
             elif (vis and abs(bearing) <= 0.22) or (mem_rel is not None and abs(mem_rel[1]) <= 0.16 and in_state_s >= 0.4):
                 with self.lock:
@@ -986,17 +1004,26 @@ class FlatnessMissionNode(Node):
         elif self.state == "CHASING":
             dist_err = dist - self.standoff_m
 
-            # Standoff Guard in CHASING: brake immediately at 20 cm
-            # Because the cubic path enforces arrival tangent alignment (Eq. 2), the robot is already aligned!
-            tof_triggered = tof_ok and (self.tof.dist_m <= (self.standoff_m + 0.02))
-            cam_triggered = vis and (self.tag_dist_m <= (self.standoff_m + 0.02))
-            fused_close = dist <= (self.standoff_m + 0.02)
-            if dist_err <= 0.015 or fused_close or tof_triggered or cam_triggered:
-                vx_cmd, wz_cmd = 0.0, 0.0
-                self.state = "ARRIVED (20cm)"
-                self.state_time = now
-                self._halted = True
-                self.get_logger().info(f"[ARRIVED] Tag {self.target_tag_id} reached at 20 cm standoff fully aligned via flat trajectory!")
+            # Standoff Guard in CHASING: brake forward motion at 20 cm and center heading on tag
+            tof_triggered = tof_ok and (self.tof.dist_m <= (self.standoff_m + 0.025))
+            cam_triggered = vis and (self.tag_dist_m <= (self.standoff_m + 0.025))
+            fused_close = dist <= (self.standoff_m + 0.025)
+            if dist_err <= 0.020 or fused_close or tof_triggered or cam_triggered:
+                if abs(bearing) <= 0.030:
+                    vx_cmd, wz_cmd = 0.0, 0.0
+                    self.state = "ARRIVED (20cm)"
+                    self.state_time = now
+                    self._halted = True
+                    self.get_logger().info(f"[ARRIVED] Tag {self.target_tag_id} reached at {dist:.2f}m standoff, squarely facing Tag {self.target_tag_id} (bearing={math.degrees(bearing):+.1f}deg)!")
+                else:
+                    vx_cmd = 0.0
+                    w_lim = min(0.32, float(self.align_wz_max))
+                    wz_cmd = float(np.clip(self.kp_bearing * bearing, -w_lim, w_lim))
+                    if abs(bearing) > 0.03 and abs(wz_cmd) < 0.12:
+                        wz_cmd = math.copysign(0.12, bearing)
+                    self.state = "ALIGNING_FINAL"
+                    self.state_time = now
+                    self.get_logger().info(f"[ALIGNING_FINAL] At 20cm standoff (d={dist:.2f}m). Centering heading to squarely face Tag {self.target_tag_id} (brg={math.degrees(bearing):+.1f}deg)...")
             # Only return to ALIGNING if the tag is completely behind/sideways (> 65 deg) or lost with no memory
             elif (not vis_recent and mem_rel is None) or abs(bearing) > math.radians(65.0):
                 vx_cmd = 0.0
@@ -1017,6 +1044,47 @@ class FlatnessMissionNode(Node):
                     self.alpha_x, self.alpha_y, tau_look, self.cubic_T
                 )
                 cubic_heading = math.atan2(ydot, max(0.03, xdot))
+
+                # Smoothly scale forward speed by cos(bearing)
+                cos_scale = max(0.25, math.cos(1.3 * bearing))
+                vx_target = min(self.v_max, (0.45 * v_ff + 0.55 * max(0.0, dist_err)) * cos_scale)
+                if dist_err < 0.12:
+                    vx_cmd = float(np.clip(vx_target, 0.04, 0.08))
+                elif dist_err < 0.30:
+                    vx_cmd = float(np.clip(vx_target, self.v_min, min(self.v_max, 0.16)))
+                else:
+                    vx_cmd = float(np.clip(vx_target, self.v_min, self.v_max))
+
+                # Steer along the planned curving path: combines differential flatness feedforward w_ff,
+                # tangent tracking along the curve, and visual alignment to the tag normal.
+                eff_wz_max = float(self.chase_wz_max)
+                steer_cmd = w_ff + 1.25 * cubic_heading + 0.35 * (bearing - skew)
+                wz_cmd = float(np.clip(steer_cmd, -eff_wz_max, eff_wz_max))
+
+        # ---------------------------------------------------------------------
+        # 4. ALIGNING_FINAL: Zero-Forward-Speed Terminal Heading Alignment to Face Tag
+        # ---------------------------------------------------------------------
+        elif self.state == "ALIGNING_FINAL":
+            dist_err = dist - self.standoff_m
+            vx_cmd = 0.0
+            if dist_err > 0.030:
+                vx_cmd = 0.04
+            elif dist_err < -0.015:
+                vx_cmd = -0.04
+
+            w_lim = min(0.32, float(self.align_wz_max))
+            w_min = 0.12
+
+            if abs(bearing) <= 0.030 or in_state_s >= 2.2:
+                vx_cmd, wz_cmd = 0.0, 0.0
+                self.state = "ARRIVED (20cm)"
+                self.state_time = now
+                self._halted = True
+                self.get_logger().info(f"[ARRIVED] Final pose centered! Robot squarely facing Tag {self.target_tag_id} at {dist:.2f}m standoff (bearing={math.degrees(bearing):+.1f}deg)!")
+            else:
+                wz_cmd = float(np.clip(self.kp_bearing * bearing, -w_lim, w_lim))
+                if abs(bearing) > 0.03 and abs(wz_cmd) < w_min:
+                    wz_cmd = math.copysign(w_min, bearing)
 
                 # Smoothly scale forward speed by cos(bearing) so the robot curves continuously
                 cos_scale = max(0.25, math.cos(1.3 * bearing))
@@ -1512,8 +1580,14 @@ class FlatnessMissionNode(Node):
                 self.get_logger().info(f"[GUI] RESTARTED MISSION: 360-Deg Sweep for Tag {self.target_tag_id} (Odom & Table 1 Reset)!")
                 self.get_logger().info("=" * 72)
             elif action == "set_tag" and "target_tag_id" in cmd:
-                self.target_tag_id = int(cmd["target_tag_id"])
-                self.get_logger().info(f"[GUI] Switched Target Tag to T{self.target_tag_id}.")
+                with self.lock:
+                    self.target_tag_id = int(cmd["target_tag_id"])
+                    mem_rel = self._get_mem_tag_relative(self.target_tag_id)
+                    if mem_rel is not None:
+                        self._replan_cubic_to_tag(mem_rel[0], mem_rel[1], mem_rel[2], v_curr=self.v_min, log_plan=False)
+                    else:
+                        self._replan_cubic_to_tag(1.50, 0.0, 0.0, v_curr=self.v_min, log_plan=False)
+                self.get_logger().info(f"[GUI] Switched Target Tag to T{self.target_tag_id} and pre-computed planned path.")
             elif action == "update_params":
                 params = cmd.get("params", {})
                 self._apply_tuning_dict(params, move_arm=True)
