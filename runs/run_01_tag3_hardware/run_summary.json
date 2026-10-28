@@ -1,0 +1,11 @@
+{
+  "run_id": "run_01_tag3_hardware",
+  "timestamp": "2026-10-28 09:03:56",
+  "target_tag": 3,
+  "initial_distance_m": 1.5,
+  "final_standoff_m": 0.199,
+  "total_duration_s": 29.59,
+  "peak_velocity_mps": 0.28,
+  "final_motor_voltage_V": 0.0,
+  "status": "COMPLETED (ARRIVED AT 20CM STANDOFF)"
+}

@@ -146,6 +146,10 @@ def patch_robomaster_windows(conn_type: str):
         import robomaster.camera
         import robomaster.media
 
+        # Ensure DEFAULT_CONN_PROTO is always defined in config
+        if not hasattr(robomaster.config, "DEFAULT_CONN_PROTO"):
+            robomaster.config.DEFAULT_CONN_PROTO = getattr(robomaster.config, "DEFAULT_PROTO_TYPE", "udp")
+
         # Patch FtpConnection dummy if not available
         if not hasattr(robomaster.conn, "FtpConnection"):
             class DummyFtp:
@@ -372,10 +376,11 @@ class WindowsMissionRunner:
 
     def _init_hardware_or_sim(self):
         if not self.use_sim:
+            target_ip = "192.168.42.2" if self.conn_type == "rndis" else "192.168.2.1"
             patch_robomaster_windows(self.conn_type)
             try:
                 from robomaster import robot
-                print(f"[*] Attempting direct connection to RoboMaster EP ({self.conn_type})...")
+                print(f"[*] Attempting direct connection to RoboMaster EP at {target_ip} ({self.conn_type})...")
                 self.ep_robot = robot.Robot()
                 self.ep_robot.initialize(conn_type=self.conn_type)
                 self.hw_connected = True
@@ -405,7 +410,9 @@ class WindowsMissionRunner:
 
                 return
             except Exception as e:
-                print(f"[!] Hardware unavailable on Windows ({e}).")
+                print(f"[!] Hardware unavailable at {target_ip} ({e}).")
+                print(f"    - Wi-Fi AP Mode: ensure Windows Wi-Fi is connected to 'RMEP-...' ({target_ip}).")
+                print(f"    - USB RNDIS Mode: ensure USB cable is connected (192.168.42.2).")
                 print("[*] Automatically switching to Camera-Only Simulation Arena...")
 
         self.hw_connected = False
@@ -1158,6 +1165,15 @@ class WindowsMissionRunner:
                 w = csv.writer(f)
                 w.writerow(["t_s", "V1_V", "V2_V", "V3_V", "V4_V", "vx_mps", "vy_mps", "wz_radps", "dist_m", "bearing_deg", "skew_deg", "state"])
                 w.writerows(self.continuous_rows)
+
+            # Auto-archive run with dedicated folder and generated graphs
+            try:
+                import datetime
+                from run_archiver import archive_run
+                run_tag = f"run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_tag{self.target_tag_id}"
+                archive_run(run_tag, t1_path, c_path, target_tag_id=self.target_tag_id, d0=getattr(self, 'd0_measured', 1.50))
+            except Exception as e:
+                print(f"[!] Auto-archive error: {e}")
         except Exception:
             pass
 

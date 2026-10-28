@@ -115,10 +115,16 @@ class CameraAprilTagDetector:
         seen = set()
 
         for _, det in self.detectors:
-            if isinstance(det, tuple):
-                corners, ids, _ = cv2.aruco.detectMarkers(gray, det[0], parameters=det[1])
-            else:
-                corners, ids, _ = det.detectMarkers(gray)
+            try:
+                if isinstance(det, tuple):
+                    if hasattr(cv2.aruco, "detectMarkers"):
+                        corners, ids, _ = cv2.aruco.detectMarkers(gray, det[0], parameters=det[1])
+                    else:
+                        continue
+                else:
+                    corners, ids, _ = det.detectMarkers(gray)
+            except Exception:
+                continue
 
             if ids is None or len(ids) == 0:
                 continue

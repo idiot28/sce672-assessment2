@@ -1,6 +1,6 @@
 \documentclass[10pt,a4paper]{article}
 \usepackage[utf8]{inputenc}
-\usepackage[margin=0.75in,top=0.7in,bottom=0.7in]{geometry}
+\usepackage[margin=0.72in,top=0.65in,bottom=0.65in]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx}
 \usepackage{booktabs}
@@ -12,7 +12,7 @@
 \usepackage[colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue!80!black]{hyperref}
 
 \lstset{
-    basicstyle=\ttfamily\small,
+    basicstyle=\ttfamily\scriptsize,
     backgroundcolor=\color{black!3},
     frame=single,
     rulecolor=\color{black!15},
@@ -23,7 +23,7 @@
 
 \pagestyle{fancy}
 \fancyhf{}
-\setlength{\headheight}{14pt}
+\setlength{\headheight}{13pt}
 \lhead{SCE 672: Advanced Robotics}
 \rhead{Raian E Rabbani (202617880)}
 \cfoot{\thepage}
@@ -32,67 +32,81 @@
 
 % Header
 \begin{center}
-    {\large \textbf{King Fahd University of Petroleum \& Minerals}}\\[0.05cm]
-    {\normalsize Department of Systems \& Control Engineering}\\[0.10cm]
+    {\large \textbf{King Fahd University of Petroleum \& Minerals}}\\[0.04cm]
+    {\normalsize Department of Systems \& Control Engineering}\\[0.08cm]
+    \rule{\textwidth}{0.6pt}\\[0.08cm]
+    {\Large \textbf{Assessment 2: Differential Flatness Pursuit and Motor Voltage Dynamics}}\\[0.08cm]
     \rule{\textwidth}{0.6pt}\\[0.10cm]
-    {\Large \textbf{Assessment 2: Differential Flatness Pursuit and Motor Voltage Dynamics}}\\[0.10cm]
-    \rule{\textwidth}{0.6pt}\\[0.12cm]
     \small
     \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lll}
         \textbf{Course:} SCE 672 -- Advanced Robotics & \textbf{Instructor:} Prof. Aamer Iqbal Bhatti & \textbf{Date:} October 2026 \\
         \textbf{Student:} Raian E Rabbani & \textbf{Student ID:} 202617880 & \textbf{Target:} AprilTag $T_3$ ($d_0 = 1.50$~m)
-    \end{tabular*}\\[0.10cm]
+    \end{tabular*}\\[0.08cm]
     \footnotesize
     \textbf{GitHub Repository:} \href{https://github.com/idiot28/sce672-assessment2}{\url{https://github.com/idiot28/sce672-assessment2}} \quad $\boldsymbol{\mid}$ \quad
     \textbf{Demonstration Video:} \href{https://youtu.be/Z7XR6nu3mu0?si=uz1j3nOYoMPpDBvn}{\url{https://youtu.be/Z7XR6nu3mu0}}
 \end{center}
-\vspace{0.1cm}
+\vspace{-0.15cm}
 
 \section*{Problem 1: Visual Search, In-Place Centering \& Standoff Guard}
 
 \subsection*{(i) Downward Camera Setup}
-The FPV camera is mounted on the 2-DOF robotic arm. Setting the arm to $(X = 105\text{~mm}, Y = 30\text{~mm})$ was initially evaluated, but on the robot the gripper claws obstruct the upper field of view when tilted toward the floor. By positioning the arm at $(X = 140\text{~mm}, Y = 35\text{~mm})$:
+The FPV camera is mounted on the 2-DOF robotic arm. Setting the arm to $(X = 105\text{~mm}, Y = 30\text{~mm})$ was initially evaluated, but physical testing showed the gripper claws obstructed the upper field of view when tilted toward the floor. Setting the arm to $(X = 140\text{~mm}, Y = 35\text{~mm})$:
 \begin{lstlisting}[language=Python]
 self.ep_robot.robotic_arm.moveto(x=140, y=35).wait_for_completed()
 \end{lstlisting}
-the camera is pitched down by approximately $22^\circ$. This provides an unobstructed view of floor-mounted AprilTags between $0.35\text{~m}$ and $1.80\text{~m}$ while keeping the claws completely out of the frame.
+pitches the camera down by approximately $22^\circ$. This maintains an unobstructed view of floor-mounted AprilTags from $0.35\text{~m}$ to $1.80\text{~m}$ while keeping the claws completely outside the optical frame.
 
-\subsection*{(ii) Search and Centering Finite State Machine}
-The high-level supervisor implements a three-state machine:
-\begin{enumerate}[noitemsep,topsep=2pt]
-    \item \textbf{\texttt{SEARCHING}:} When the target tag is not detected ($\Delta t > 0.45\text{~s}$), forward translation is set to zero ($v = 0$) and the robot rotates in place ($\omega_z = \pm 0.30\text{~rad/s}$) toward the last observed direction of the tag.
-    \item \textbf{\texttt{ALIGNING}:} Once detected, the robot turns in place ($v = 0$) until the bearing error satisfies $|\theta_{\text{bearing}}| \le 0.18\text{~rad}$ ($\approx 10^\circ$).
-    \item \textbf{\texttt{CHASING}:} Once centered, the robot drives forward along the planned flat cubic trajectory.
-\end{enumerate}
+\subsection*{(ii) Search and Centering State Machine \& Commands Sent}
+The supervisory controller runs a three-state machine at 20~Hz. Centering the tag in place before translating forward prevents the tag from slipping out of the camera's horizontal field of view ($\approx 65^\circ$) and aligns the body heading so that $y(0) = 0$ in the trajectory frame, avoiding lateral wheel slip.
 
-Centering the tag in place before translating forward prevents the tag from slipping out of the camera's horizontal field of view ($\approx 65^\circ$) during forward movement. In addition, aligning the robot's heading directly toward the target satisfies the initial boundary condition $y(0) = 0$ in the flat trajectory plane, avoiding sudden lateral steering demands that cause wheel slip.
+Table~\ref{tab:commands} details the exact commands and payloads sent to the robot hardware across all operational phases. In the ROS~2 architecture, translational and angular velocities are published via the standard \texttt{/cmd\_vel} topic (\texttt{geometry\_msgs/msg/Twist}) with lateral speed strictly zeroed ($v_y = 0.0$).
 
-\subsection*{(iii) Standoff Braking}
-On this RoboMaster EP unit, no modular front ToF sensor is installed; the four circular side modules are armor hit sensors and return zero range. Furthermore, floor tags slip below the bottom edge of the camera view at approximately $d \approx 0.35\text{~m}$.
+\begin{table}[h!]
+\centering
+\caption{Commands Sent to the RoboMaster EP Hardware Across Mission States}
+\label{tab:commands}
+\vspace{0.10cm}
+\footnotesize
+\begin{tabular}{p{2.3cm} p{4.6cm} p{8.8cm}}
+\toprule
+\textbf{Mission State} & \textbf{Hardware Command Executed} & \textbf{Purpose and Control Parameters} \\
+\midrule
+\texttt{INITIALIZATION} & \texttt{robotic\_arm.moveto(x=140, y=35)} & Sets camera pitch to $-22^\circ$; clears claws from frame. \\
+\texttt{SEARCHING} & \texttt{chassis.drive\_speed(x=0, y=0, z=$\pm$0.30)} & Sweeps in place at $0.30\text{~rad/s}$ toward last sighting until tag visible ($\Delta t \le 0.45\text{~s}$). \\
+\texttt{ALIGNING} & \texttt{chassis.drive\_speed(x=0, y=0, z=$\omega_z$)} & Centers tag using proportional yaw rate $\omega_z = -1.65\,\theta_{\text{bearing}}$ until $|\theta| \le 0.18\text{~rad}$ ($10^\circ$). \\
+\texttt{CHASING} & \texttt{chassis.drive\_speed(x=$v(t)$, y=0, z=$\omega(t)$)} & Executes receding-horizon flat trajectory tracking; enforces $v_y = 0.0$ and $|\omega| \le |v| / R_{\min}$. \\
+\texttt{ARRIVED (20cm)} & \texttt{chassis.drive\_speed(x=0, y=0, z=0)} & Active zero-velocity brake engaging at $d \le 0.200\text{~m}$; drops all motor voltages to $0.000\text{~V}$. \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-To brake accurately at $20\text{~cm}$ without an external distance sensor, tag distance is computed optically using pinhole geometry while visible:
+\subsection*{(iii) Standoff Braking: Pure-Vision Dead Reckoning}
+On this hardware unit, no modular front ToF sensor is installed; the four circular side modules are piezoelectric hit sensors and return zero range. Furthermore, floor tags leave the bottom of the camera frame at $d \approx 0.35\text{~m}$.
+
+To brake squarely at $20\text{~cm}$ without an external distance sensor, tag distance is computed optically using pinhole geometry while visible:
 \begin{equation}
     d(t) = \frac{s_{\text{tag}} \cdot f_y}{\max(\text{bw}, \text{bh})}
 \end{equation}
-where $s_{\text{tag}} = 0.048\text{~m}$ is the physical tag width, $f_y \approx 420\text{~px}$ is the vertical focal length, and $\text{bw}, \text{bh}$ are the detected bounding box dimensions. When the tag leaves the camera field of view in the final approach ($d < 0.35\text{~m}$), distance is tracked by subtracting incremental wheel displacement from the last valid optical measurement:
+where $s_{\text{tag}} = 0.048\text{~m}$ is physical tag width, $f_y \approx 420\text{~px}$ is vertical focal length, and $\text{bw}, \text{bh}$ are bounding box pixel dimensions. When the tag enters the near-field blind spot ($d < 0.35\text{~m}$), distance is tracked by subtracting incremental wheel displacement from the last valid optical measurement:
 \begin{equation}
-    d(t) = d_{\text{last\_seen}} - \Delta d_{\text{wheel}}(t)
+    d(t) = d_{\text{last\_seen}} - \Delta d_{\text{wheel}}(t), \qquad \Delta d_{\text{wheel}}(t) = \int_{t_{\text{blind}}}^t v_x(\tau)\,d\tau
 \end{equation}
-Forward speed is tapered to $0.05\text{~m/s}$ below $35\text{~cm}$. As soon as $d(t) \le 0.20\text{~m}$, active braking sets $v = 0$ and $\omega = 0$, bringing the robot to rest at $20\text{~cm}$.
+Speed is tapered smoothly down to $0.05\text{~m/s}$ below $35\text{~cm}$. The instant $d(t) \le 0.20\text{~m}$, active braking sets $v = 0$ and $\omega = 0$, bringing the robot to rest at $20\text{~cm}$. In the video capture thread, \texttt{time.sleep(0.010)} was added between frame grabs to prevent FFmpeg decoder buffer overruns.
 
-In the video capture thread, a small delay (\texttt{time.sleep(0.010)}) was placed between frame grabs to allow the FFmpeg decoder to recycle frame buffers properly and prevent memory allocation stalls.
-
+\newpage
 \section*{Problem 2: Differential Flatness Trajectory Generation}
 
 \subsection*{(i) Differential Flatness Inversion}
-For the unicycle kinematic model $\dot{x} = v\cos\theta, \dot{y} = v\sin\theta, \dot{\theta} = \omega$, the position vector $z(t) = [x(t), y(t)]^T$ is a flat output. Linear velocity $v(t)$ and angular velocity $\omega(t)$ are recovered algebraically from the trajectory derivatives:
+For the unicycle kinematic model $\dot{x} = v\cos\theta, \dot{y} = v\sin\theta, \dot{\theta} = \omega$, the position vector $z(t) = [x(t), y(t)]^T$ is a flat output. Forward linear velocity $v(t)$ and yaw rate $\omega(t)$ are recovered algebraically from the analytical trajectory derivatives:
 \begin{equation}
     v(t) = \sqrt{\dot{x}(t)^2 + \dot{y}(t)^2}, \qquad
     \omega(t) = \frac{\dot{x}(t)\ddot{y}(t) - \dot{y}(t)\ddot{x}(t)}{\dot{x}(t)^2 + \dot{y}(t)^2}
+    \label{eq:flat_inversion}
 \end{equation}
 
 \subsection*{(ii) Cubic Polynomial Matrix Solution}
-Each coordinate is parameterized as a cubic polynomial $z_j(t) = \alpha_0^{[j]} + \alpha_1^{[j]}t + \alpha_2^{[j]}t^2 + \alpha_3^{[j]}t^3$ for $j \in \{x, y\}$ over horizon $T$. Evaluating at boundaries $t = 0$ and $t = T$ produces the linear system $\mathbf{M}(T)\boldsymbol{\alpha}^{[j]} = \mathbf{b}^{[j]}$:
+Each coordinate is parameterized as a cubic polynomial $z_j(t) = \alpha_0^{[j]} + \alpha_1^{[j]}t + \alpha_2^{[j]}t^2 + \alpha_3^{[j]}t^3$ for $j \in \{x, y\}$ over duration $T$. Setting boundary conditions at $t = 0$ and $t = T$ yields the linear system $\mathbf{M}(T)\boldsymbol{\alpha}^{[j]} = \mathbf{b}^{[j]}$:
 \begin{equation}
     \begin{bmatrix}
         1 & 0 & 0 & 0 \\
@@ -108,7 +122,7 @@ Each coordinate is parameterized as a cubic polynomial $z_j(t) = \alpha_0^{[j]} 
         z_j(0) \\ \dot{z}_j(0) \\ z_j(T) \\ \dot{z}_j(T)
     \end{bmatrix}
 \end{equation}
-The coefficients are solved in Python using \texttt{numpy.linalg.solve}:
+Solved via \texttt{numpy.linalg.solve}:
 \begin{lstlisting}[language=Python]
 def solve_flat_polynomial(z0, zdot0, zf, zdotf, T):
     M = np.array([
@@ -120,34 +134,47 @@ def solve_flat_polynomial(z0, zdot0, zf, zdotf, T):
     b = np.array([z0, zdot0, zf, zdotf], dtype=np.float64)
     return np.linalg.solve(M, b)
 \end{lstlisting}
-For target tag $T_3$ located at initial distance $d_0 = 1.50\text{~m}$, the boundary conditions are:
-\begin{itemize}[noitemsep,topsep=1pt]
-    \item Longitudinal ($x$): $x(0) = 0$, $\dot{x}(0) = 0.06\text{~m/s}$, $x(T) = d_0 - 0.20\text{~m} = 1.30\text{~m}$, $\dot{x}(T) = 0$.
-    \item Lateral ($y$): $y(0) = 0$, $\dot{y}(0) = 0$, $y(T) = 0$, $\dot{y}(T) = 0$.
-\end{itemize}
 
-\subsection*{(iii) Time Horizon Scaling}
+\subsection*{(iii) Explicit Polynomial Equations Built and Horizon Scaling}
 The time horizon $T$ is scaled dynamically based on initial tag distance $d_0$:
 \begin{equation}
     T = \max\left(4.0,\; \frac{1.6 \cdot (d_0 - 0.20)}{v_{\max}}\right)
 \end{equation}
-For $d_0 = 1.50\text{~m}$ and $v_{\max} = 0.16\text{~m/s}$:
+For Target Tag $T_3$ located at initial distance $d_0 = 1.50\text{~m}$ with $v_{\max} = 0.16\text{~m/s}$:
 \begin{equation}
     T = \max\left(4.0,\; \frac{1.6 \cdot (1.50 - 0.20)}{0.16}\right) = 13.00\text{~s}
 \end{equation}
-Solving the linear system yields the polynomial coefficients:
+The boundary conditions are:
+\begin{itemize}[noitemsep,topsep=1pt]
+    \item Longitudinal: $x(0) = 0.0\text{~m}, \;\dot{x}(0) = 0.06\text{~m/s}, \;x(T) = d_0 - 0.20 = 1.30\text{~m}, \;\dot{x}(T) = 0.0\text{~m/s}$.
+    \item Lateral: $y(0) = 0.0\text{~m}, \;\dot{y}(0) = 0.0\text{~m/s}, \;y(T) = 0.0\text{~m}, \;\dot{y}(T) = 0.0\text{~m/s}$.
+\end{itemize}
+Solving $\mathbf{M}(13.0)\boldsymbol{\alpha} = \mathbf{b}$ yields the explicit analytical equations built for this mission:
 \begin{equation}
-    \boldsymbol{\alpha}_x = \begin{bmatrix} 0.000000 \\ 0.060000 \\ 0.013846 \\ -0.000828 \end{bmatrix}, \qquad
-    \boldsymbol{\alpha}_y = \begin{bmatrix} 0 \\ 0 \\ 0 \\ 0 \end{bmatrix}
+    \boxed{x(t) = 0.060000\,t + 0.013846\,t^2 - 0.000828\,t^3 \quad (\text{for } 0 \le t \le 13.00\text{~s})}
+    \label{eq:poly_x}
 \end{equation}
-The factor of $1.6$ ensures the peak cruising speed ($0.137\text{~m/s}$) remains comfortably below the $v_{\max} = 0.16\text{~m/s}$ limit despite the non-zero initial speed $\dot{x}(0) = 0.06\text{~m/s}$.
+\begin{equation}
+    \dot{x}(t) = 0.060000 + 0.027692\,t - 0.002485\,t^2
+\end{equation}
+\begin{equation}
+    \ddot{x}(t) = 0.027692 - 0.004970\,t
+\end{equation}
+\begin{equation}
+    \boxed{y(t) = 0.0, \qquad \dot{y}(t) = 0.0, \qquad \ddot{y}(t) = 0.0}
+    \label{eq:poly_y}
+\end{equation}
+Substituting Eqs.~\eqref{eq:poly_x}--\eqref{eq:poly_y} into the inversion Eq.~\eqref{eq:flat_inversion} yields the planned forward velocity profile:
+\begin{equation}
+    v(t) = \dot{x}(t) = 0.060000 + 0.027692\,t - 0.002485\,t^2, \qquad \omega(t) = 0.0\text{~rad/s}
+\end{equation}
+Setting $\ddot{x}(t^*) = 0$ gives the peak velocity time $t^* = 0.027692 / 0.004970 = 5.57\text{~s}$, producing a peak speed of $v(5.57) = 0.137\text{~m/s}$, safely below $v_{\max} = 0.16\text{~m/s}$. To prevent open-loop drift from cumulative wheel slip, the trajectory is re-evaluated at 20~Hz using receding-horizon updates, enforcing nonholonomic constraints ($v_y = 0$) and turning limits ($|w_z| \le |v_x|/R_{\min}$).
 
-To avoid trajectory drift caused by wheel slip over the 13-second run, the trajectory is re-evaluated at 20~Hz using the robot's current estimated pose. Nonholonomic motion is enforced ($v_y = 0$), and angular rates are bounded by turning radius: $|w_z| \le |v_x| / R_{\min}$.
-
+\newpage
 \section*{Problem 3: Motor Voltage Telemetry and Dynamics Logging}
 
 \subsection*{(i) Kinematics to Wheel Rates}
-With wheel radius $r = 0.05\text{~m}$ and chassis effective radius $L_c = 0.20\text{~m}$, linear velocity $v_x$ and yaw rate $\omega_z$ map to individual wheel angular speeds $(\omega_1, \omega_2, \omega_3, \omega_4)$:
+With wheel radius $r = 0.05\text{~m}$ and chassis effective radius $L_c = 0.20\text{~m}$, forward speed $v_x$ and yaw rate $\omega_z$ map to individual wheel angular speeds $(\omega_1, \omega_2, \omega_3, \omega_4)$:
 \begin{equation}
     \omega_1 = \omega_{FR} = \frac{v_x + L_c\omega_z}{r}, \quad
     \omega_2 = \omega_{FL} = \frac{v_x - L_c\omega_z}{r}, \quad
@@ -156,13 +183,13 @@ With wheel radius $r = 0.05\text{~m}$ and chassis effective radius $L_c = 0.20\t
 \end{equation}
 
 \subsection*{(ii) Motor Armature Voltage Model}
-The armature terminal voltage incorporates back-EMF ($K_v = 0.38\text{~V}\cdot\text{s/rad}$) and acceleration inertia ($K_a = 0.06\text{~V}\cdot\text{s}^2\text{/rad}$):
+Armature terminal voltages account for back-EMF ($K_v = 0.38\text{~V}\cdot\text{s/rad}$) and acceleration inertia ($K_a = 0.06\text{~V}\cdot\text{s}^2\text{/rad}$):
 \begin{equation}
     V_i(t) = K_v \omega_i(t) + K_a \left(\frac{\omega_i(t) - \omega_i(t - \Delta t)}{\Delta t}\right), \qquad i \in \{1, 2, 3, 4\}
 \end{equation}
 
-\subsection*{(iii) Live Table and Dynamics Log}
-Table~\ref{tab:table1} records the experimental motor voltages at 1-second intervals during the pursuit of AprilTag $T_3$ from $d_0 = 1.50\text{~m}$ to the $20\text{~cm}$ standoff stop.
+\subsection*{(iii) Experimental Telemetry Log (Table 1)}
+Table~\ref{tab:table1} records the experimental motor voltages at 1-second intervals during the pursuit of AprilTag $T_3$ from $d_0 = 1.50\text{~m}$ to the $20\text{~cm}$ standoff halt.
 
 \begin{table}[h!]
 \centering
@@ -193,19 +220,36 @@ Table~\ref{tab:table1} records the experimental motor voltages at 1-second inter
 \end{tabular}
 \end{table}
 
-When the estimated tag distance reaches $0.200\text{~m}$, the controller issues active zero-velocity commands, and all motor armature voltages drop immediately to $0.000\text{~V}$.
+When estimated tag distance reaches $0.200\text{~m}$, active braking locks the chassis and all motor armature voltages drop immediately to $0.000\text{~V}$.
 
 \newpage
-\subsection*{Speed and Voltage Profile}
-Figure~\ref{fig:plot} shows the forward speed $v(t)$ and front-right motor voltage $V_1(t)$ across the mission.
+\section*{Graphical Trajectory and Telemetry Results}
 
-\begin{figure}[h!]
-\centering
-\includegraphics[width=0.88\textwidth]{fig_speed_and_voltage.png}
-\caption{(a) Forward speed $v(t)$ during trajectory tracking, and (b) front-right motor armature voltage $V_1(t)$ from initial alignment to standoff halt.}
+\subsection*{2D Path Comparison: Planned Flat Trajectory vs. Actual Robot Path}
+Figure~\ref{fig:path2d} compares the planned cubic flat trajectory $z(t)$ against the actual executed path from initial alignment at $(0, 0)$ to the 20~cm standoff boundary in front of AprilTag $T_3$.
+
+\begin{center}
+\includegraphics[width=0.72\textwidth]{fig_path_2d_planned_vs_actual.png}
+\vspace{-0.20cm}
+\captionof{figure}{2D Ground Map: Comparison of the planned cubic trajectory (blue solid line) and actual executed path (green dashed line), terminating squarely at the 20~cm standoff point ($x = 1.30\text{~m}$) in front of Tag $T_3$ ($x = 1.50\text{~m}$).}
+\label{fig:path2d}
+\end{center}
+\vspace{-0.25cm}
+
+\subsection*{Forward Speed and Motor Armature Voltage Profiles}
+Figure~\ref{fig:plot} presents the forward speed $v(t)$ (planned vs. actual executed velocity) and the Front-Right motor armature voltage $V_1(t)$ across all mission phases.
+
+\begin{center}
+\includegraphics[width=0.72\textwidth]{fig_speed_and_voltage.png}
+\vspace{-0.20cm}
+\captionof{figure}{(a) Forward speed $v(t)$ profile comparing planned flatness velocity against actual continuous telemetry, and (b) Front-Right motor armature terminal voltage $V_1(t)$ settling to $0.000\text{~V}$ at standoff halt.}
 \label{fig:plot}
-\end{figure}
+\end{center}
+\vspace{-0.15cm}
 
-During initial alignment ($t < 1\text{~s}$), forward speed remains zero while the chassis turns in place to center the tag; the right wheels spin in reverse ($V_1 < 0$). Once centered, the robot accelerates along the cubic curve, reaching a peak forward speed of $0.137\text{~m/s}$ around $t = 6\text{~s}$, well under $v_{\max} = 0.16\text{~m/s}$. The motor voltage reflects both back-EMF and acceleration torque. During deceleration ($t > 6\text{~s}$), voltage decreases smoothly until active braking halts the robot at $t = 14\text{~s}$, where all voltages settle to $0.000\text{~V}$.
+During initial alignment ($t < 1\text{~s}$), forward velocity is zero while the chassis turns in place to center the tag; the right wheels counter-rotate ($V_1 < 0$). During pursuit, forward velocity closely matches the planned acceleration-deceleration curve, peaking at $0.137\text{~m/s}$. At $t = 14\text{~s}$, standoff braking halts the robot at $d = 0.200\text{~m}$, dropping all motor voltages to $0.000\text{~V}$.
+
+\subsection*{Automated Run Logging Pipeline}
+All historical and future runs are automatically cataloged into dedicated subfolders under \texttt{runs/run\_<id>/}. Each folder stores the 1-second Table~1 CSV, continuous 20~Hz telemetry, generated 2D path map, velocity/voltage plot, and a JSON execution summary, with a master index in \texttt{runs/README.md}.
 
 \end{document}

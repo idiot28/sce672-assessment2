@@ -1207,6 +1207,18 @@ class FlatnessMissionNode(Node):
                 w = csv.writer(f)
                 w.writerow(["t_s", "V1_V", "V2_V", "V3_V", "V4_V", "vx_mps", "vy_mps", "wz_radps", "dist_m", "bearing_deg", "skew_deg", "state"])
                 w.writerows(self.continuous_rows)
+
+            # Auto-archive run with dedicated folder and generated graphs
+            try:
+                import datetime
+                import sys
+                if self.output_dir not in sys.path:
+                    sys.path.insert(0, self.output_dir)
+                from run_archiver import archive_run
+                run_tag = f"run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_tag{self.target_tag_id}"
+                archive_run(run_tag, t1_path, c_path, target_tag_id=self.target_tag_id, d0=getattr(self, 'd0_measured', 1.50))
+            except Exception as e:
+                self.get_logger().warn(f"[!] Auto-archive warning: {e}")
         except Exception:
             pass
 
